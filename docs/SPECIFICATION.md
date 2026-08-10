@@ -128,13 +128,20 @@ The project was created in a single session on 2026-08-10, driven by a design do
 
 ### 3.5 Auth & profiles
 
-- X (Twitter) OAuth 2.0 with PKCE (`users.read` scope).
-- Local dev-login (disabled in production) for testing without X.
-- Session-based auth (tower-sessions, Postgres-backed store).
+- Local username/password auth (Argon2id, PHC strings), session cookies
+  (tower-sessions, Postgres-backed store).
+- Public register/login forms are bot-dissuaded: hidden honeypot field, form
+  timing (3s–10min open window), and a JS proof-of-work challenge
+  (`sha256(nonce || username || password)` truncated to 16 hex chars, nonce from
+  `GET /api/auth/nonce`).
 - Profiles: public username (unique, 2–30 chars, `[a-zA-Z0-9_]`), display name (≤50),
-  avatar URL (http(s) only; DiceBear identicon fallback client-side).
+  avatar URL (http(s) only; DiceBear identicon fallback client-side), and an
+  optional `social_url` (one external link, http(s) only) shown on the public
+  profile when someone clicks the user's name.
 - Public profile page with stats + "forging since" date.
-- Settings page to edit username/display/avatar.
+- Settings page to edit username/display/avatar/social_url.
+- Passwords: min 8 chars, hashed with Argon2id (~19 MiB, t=2, p=1); legacy
+  X/dev rows have no hash and can't log in this way.
 
 ### 3.6 UX polish
 
@@ -154,8 +161,8 @@ The project was created in a single session on 2026-08-10, driven by a design do
 | Database | PostgreSQL 16 (local dev + ThinkCentre prod) | sqlx 0.8, runtime queries + embedded migrations |
 | Frontend | SvelteKit 2 (Svelte 5), adapter-static | SPA mode, `fallback: 'index.html'` |
 | Styling | Plain CSS + CSS custom properties | no Tailwind/shadcn — deliberate |
-| Auth | oauth2 4.x, X OAuth 2.0 PKCE | `oauth2::reqwest::async_http_client` |
-| HTTP client | reqwest 0.12 (rustls) | for OAuth + X user fetch |
+| Auth | argon2 0.5 (Argon2id), local username/password | bot-dissuasion: honeypot + form timing + sha256 nonce challenge |
+| HTTP client | reqwest 0.12 (rustls) | (kept; no longer used for OAuth) |
 | Icons | lucide-svelte | |
 | Tests | Rust `#[sqlx::test]` integration + Vitest | targeted suites only (see Testing) |
 | Deploy | systemd + Cloudflare tunnel (token-based) | ThinkCentre M720q, port 8001 |
@@ -183,12 +190,14 @@ streakforge/                        # repo root (git, private on opencommit.eu)
 │   ├── migrations/
 │   │   ├── 0001_init.sql           # profiles, habit_logs, user_streak()
 │   │   ├── 0002_leaderboards.sql   # daily/weekly/alltime/UOTD/total/feed/profile_stats
-│   │   └── 0003_affirmations.sql   # kind column, user_streak_kind(), kind-filtered redefs
+│   │   ├── 0003_affirmations.sql   # kind column, user_streak_kind(), kind-filtered redefs
+│   │   └── 0004_local_auth.sql     # password_hash + social_url, provider default 'local' |
 │   ├── src/
 │   │   ├── main.rs                 # router, session layer, SPA fallback, startup
 │   │   ├── lib.rs                  # AppState + module facade (for tests)
 │   │   ├── api.rs                  # ALL API handlers + DTOs + rate limiting
-│   │   ├── auth.rs                 # X OAuth, dev login, session helpers, upsert_profile
+│   │   ├── auth.rs                 # register/login/nonce, Argon2id, bot-dissuasion, sessions |
+│   │   ├── auth_tests.rs           # unit tests for challenge proof / validation
 │   │   ├── manifesto.rs            # /api/manifesto list + get
 │   │   ├── config.rs               # env config struct
 │   │   ├── db.rs                   # pool connect + migrations
@@ -253,13 +262,19 @@ All timestamps are UTC. Tables live in the `public` schema.
 | username | text | UNIQUE NOT NULL, check `^[a-zA-Z0-9_]{2,30}$` |
 | display_name | text | check length ≤ 50 |
 | avatar_url | text | nullable |
-| provider | text | NOT NULL default 'x', check in ('x','dev') |
+| password_hash | text | nullable (Argon2id PHC string; added in 0004) |
+| social_url | text | nullable, check `^https?://` or empty (added in 0004) |
+| provider | text | NOT NULL default 'local', check in ('local','x','dev') (0004) |
 | provider_id | text | nullable; UNIQUE(provider, provider_id) |
 | created_at | timestamptz | NOT NULL default now() |
 | updated_at | timestamptz | NOT NULL default now() |
 
 Notes:
-- `UNIQUE(provider, provider_id)` is the idempotency key for OAuth upserts.
+- Local accounts: `provider='local'`, `provider_id=NULL`, keyed off unique
+  `username`; `password_hash` holds the Argon2id PHC string.
+- Legacy X/dev rows (provider 'x'/'dev') have `password_hash=NULL` and can't log
+  in via the local form. `UNIQUE(provider, provider_id)` stays valid for them
+  (multiple NULLs are allowed in Postgres).
 - There is **no auth.users table** — sessions reference profiles directly.
 
 ### 6.2 `habit_logs`
@@ -383,16 +398,38 @@ Base URL: `/api` (proxied by the SPA in dev; same origin in production).
 
 | Method | Path | Auth | Request | Response |
 |--------|------|------|---------|----------|
+| GET | `/auth/nonce` | — | — | `{"nonce": "<32-hex>"}` (fresh, for the JS challenge) |
+| POST | `/auth/register` | — (bot-dissuaded) | JSON `AuthForm` | 201 `SessionUser` (session cookie set), or 400/409 |
+| POST | `/auth/login` | — (bot-dissuaded) | JSON `AuthForm` | 200 `SessionUser` (session cookie set), or 400/401 |
 | GET | `/auth/me` | ✓ | — | `SessionUser` or 401 |
 | POST | `/auth/logout` | ✓ | — | 303 redirect to `/` |
-| GET | `/auth/x` | — | — | 303 redirect to X authorize URL |
-| GET | `/auth/x/callback` | — | `?code&state` | 303 redirect to `/dashboard`, session cookie set |
-| POST | `/auth/dev-login` | — (env-gated) | `?username=` | 303 redirect to `/dashboard` |
+
+`AuthForm` (JSON body):
+```json
+{
+  "username": "string",
+  "password": "string",
+  "form_opened_at": 1234567890000,
+  "website": "",
+  "challenge_proof": "<16 hex chars>",
+  "challenge_nonce": "<32 hex chars>"
+}
+```
+- `website` = honeypot, must be empty.
+- `form_opened_at` = client ms epoch when the form was opened; must be within
+  3s–10min of server time at submit.
+- `challenge_proof` = `sha256(nonce || username || password)` truncated to the
+  first 16 hex chars; recomputed server-side.
+- Register: username 2–30 chars `[a-zA-Z0-9_]`, password 8–1024 chars; duplicate
+  username → 409 "That username is already taken".
+- Login: any failure (unknown user, missing hash, bad password) → generic
+  401 "Invalid username or password" (timing-equalized for unknown users).
 
 `SessionUser`:
 ```json
 { "id": "uuid", "username": "string", "display_name": "string|null",
-  "avatar_url": "string|null", "provider": "x|dev" }
+  "avatar_url": "string|null", "provider": "local",
+  "social_url": "string|null" }
 ```
 
 ### 8.2 Logs & stats
@@ -431,15 +468,16 @@ Base URL: `/api` (proxied by the SPA in dev; same origin in production).
 | Method | Path | Auth | Request | Response |
 |--------|------|------|---------|----------|
 | GET | `/profile/{username}` | — | — | `ProfileResponse` or 404 |
-| PATCH | `/profile` | ✓ | `{"username"?, "display_name"?, "avatar_url"?}` | `ProfileResponse` or 400/409 |
+| PATCH | `/profile` | ✓ | `{"username"?, "display_name"?, "avatar_url"?, "social_url"?}` | `ProfileResponse` or 400/409 |
 
-`ProfileResponse`: `{ id, username, display_name, avatar_url, created_at, streak,
-longest_streak, today_count, week_count, alltime_count }`
+`ProfileResponse`: `{ id, username, display_name, avatar_url, social_url, created_at,
+streak, longest_streak, today_count, week_count, alltime_count }`
 
 PATCH validation:
 - username: 2–30 chars `[a-zA-Z0-9_]` (400 otherwise), unique (409 "That username is already taken").
 - display_name: ≤50 chars; empty → None.
 - avatar_url: must start with http:// or https://; empty → None.
+- social_url: must start with http:// or https:// (DB check too); empty → None.
 
 ### 8.5 Manifesto
 
@@ -454,31 +492,60 @@ PATCH validation:
 
 ## 9. Authentication
 
-### 9.1 X OAuth 2.0 (PKCE)
+Local username/password auth. No X OAuth, no dev-login, no SMTP. The public
+register/login endpoints are bot-dissuaded with three layered checks.
 
-- Provider URLs: authorize `https://twitter.com/i/oauth2/authorize`, token
-  `https://api.twitter.com/2/oauth2/token`, profile `https://api.twitter.com/2/users/me`.
-- Redirect URI: `{PUBLIC_URL}/api/auth/x/callback`.
-- Flow: `/auth/x` creates a PKCE challenge + CSRF state, stores both in the session,
-  redirects to X. X redirects back with `code` + `state`; the callback verifies state,
-  exchanges the code (via `oauth2::reqwest::async_http_client`), fetches the user,
-  upserts the profile, and inserts the user into the session.
-- `upsert_profile`: tries base username (X handle sanitized), then `base_1`, `base_2`...
-  up to 100 attempts on unique violation. `provider_id` = X user id.
+### 9.1 Endpoints
 
-### 9.2 Dev login (local/testing only)
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/auth/nonce` | Fresh random 32-hex nonce for the JS challenge |
+| POST | `/api/auth/register` | Create a local account (Argon2id) and start a session |
+| POST | `/api/auth/login` | Verify credentials and start a session |
+| GET | `/api/auth/me` | Current session user (401 if none) |
+| POST | `/api/auth/logout` | Flush session, redirect to `/` |
 
-- Gated by `ALLOW_DEV_LOGIN` (default true locally, false in the deployed .env).
-- `POST /api/auth/dev-login?username=foo` upserts a deterministic profile with
-  `provider='dev'`, `provider_id='dev-{username}'`, and redirects to `/dashboard`.
-- The frontend shows the "DEV LOGIN (local testing)" button only when built with
-  `VITE_ALLOW_DEV_LOGIN=1` (statically replaced at build time).
+Register/login both take the same JSON `AuthForm` body (see §8.1).
 
-### 9.3 Sessions
+### 9.2 Password storage
+
+- Argon2id (`argon2` crate 0.5), parameters: m=19456 KiB (~19 MiB), t=2, p=1.
+- Stored as a PHC string in `profiles.password_hash` (migration 0004).
+- Password rules: 8–1024 chars (register only).
+- Login is timing-equalized: unknown usernames burn a dummy Argon2 hash so the
+  response time doesn't reveal whether the username exists.
+
+### 9.3 Bot-dissuasion (register + login forms)
+
+Three layered checks in `validate_auth_form()` — all failures return a generic
+400 "Invalid form submission" so bots can't probe which check tripped:
+
+1. **Honeypot** — a hidden `website` field that humans never see. Bots that
+   autofill every input fill it; any non-empty value is rejected.
+2. **Form timing** — the form records `form_opened_at` (client ms epoch) when it
+   loads. On submit the server requires the form to have been open between
+   `FORM_MIN_OPEN_MS` (3s) and `FORM_MAX_OPEN_MS` (10 min). Instant submissions
+   (bots) and stale sessions (harvested forms) are rejected.
+3. **JS proof-of-work challenge** — the client fetches `GET /api/auth/nonce` for a
+   fresh random nonce, computes `proof = sha256(nonce || username || password)`,
+   and sends the first 16 hex chars plus the nonce back. The server recomputes and
+   requires an exact match (constant-time compare). A bot that skips the JS cannot
+   produce a valid proof without running the challenge.
+
+Because the proof covers the actual password, the challenge can't be replayed and
+the nonce is single-use in effect (fresh per page load).
+
+### 9.4 Sessions
 
 - tower-sessions `Session` extractor; store = PostgresStore (schema `tower_sessions`).
 - Cookie signed with `SESSION_SECRET`; `SECURE_COOKIES=1` behind HTTPS.
 - Handlers read the user from `session.get(SESSION_USER_KEY)`; 401 if absent.
+
+### 9.5 Legacy X/dev rows
+
+Profiles created before migration 0004 (`provider='x'` or `'dev'`) have
+`password_hash = NULL` and cannot log in through the local form. They keep their
+public surface (leaderboards, feed, profile pages) but are effectively read-only.
 
 ---
 
@@ -570,7 +637,7 @@ usernames + relative times.
 ### 11.4 Other wlw-style elements
 
 - `EMBRACE THE STREAK. THE FUTURE IS CONSISTENT.` tagline (mono, letter-spaced, red).
-- "X login required. Own your submission." under the CTA.
+- "Sign in to forge your streak. Own your submission." under the CTA.
 - "USER OF THE DAY" gold crown card.
 - "TOP FORGERS TODAY" board with green mono counts, rank column (gold/silver/bronze for
   top 3).
@@ -678,10 +745,15 @@ space, capitalize first letter).
 - **XSS**: markdown renderer escapes HTML before rendering; `{@html}` only gets the
   escaped output. Avatar URL validated http(s). Username restricted to
   `[a-zA-Z0-9_]`.
-- **Secrets**: `SESSION_SECRET` required in prod (random 64-hex set on deploy);
-  X credentials via env; dev-login disabled in prod; git credential store
-  (`~/.config/git/credentials`) holds the Forgejo token — never commit tokens.
+- **Secrets**: `SESSION_SECRET` required in prod (random 64-hex, generated on
+  deploy and saved in the Hermes profile `.env` as `STREAKFORGE_SESSION_SECRET`; the
+  Postgres DB password is likewise random, saved as `STREAKFORGE_DB_PASSWORD`);
+  git credential store (`~/.config/git/credentials`) holds the Forgejo token —
+  never commit tokens.
+- **Bot-dissuasion**: public register/login forms require an empty honeypot,
+  3s–10min form timing, and a valid sha256 nonce challenge proof (see §9.3).
 - **CORS**: dev CORS allows the configured PUBLIC_URL origin with credentials.
+- Unknown `/api/*` paths return 404 (the SPA fallback refuses `/api/` prefixes).
 
 ---
 
@@ -689,7 +761,7 @@ space, capitalize first letter).
 
 ### 16.1 Backend (Rust)
 
-`backend/tests/integration.rs`, 6 tests, all `#[sqlx::test(migrations = "./migrations")]`
+`backend/tests/integration.rs`, 13 tests, all `#[sqlx::test(migrations = "./migrations")]`
 (creates a throwaway DB per test from the migrations):
 
 1. `streak_calculation_basic` — no logs (0,0); one today (1,1).
@@ -699,6 +771,10 @@ space, capitalize first letter).
 5. `feed_pagination` — 2-per-page keyset pagination, ids strictly decreasing.
 6. `affirmation_kind_separated_from_community` — drill streak counts only
    affirmations; alltime board/feed/total count only habits.
+7. Auth integration (7 tests) — register creates a local profile + session;
+   duplicate username → 409; login with correct/incorrect password; generic 401
+   (no user-enumeration); bot-dissuasion (honeypot, form timing, bad challenge
+   proof) → 400; social_url round-trip through PATCH /profile.
 
 Run (needs local Postgres + `streakforge_test` DB):
 ```bash
@@ -710,14 +786,17 @@ suite.
 
 ### 16.2 Frontend (Vitest)
 
-`web/src/lib/*.test.ts`, 24 tests across 4 files:
+`web/src/lib/*.test.ts`, 33 tests across 5 files:
 
-- `api.test.ts` (8) — timeAgo boundaries, formatCount padding.
+- `api.test.ts` (12) — nonce/register/login payloads, error surfacing, timeAgo
+  boundaries, formatCount padding.
 - `validation.test.ts` (4) — isValidUsername.
 - `markdown.test.ts` (8) — headings, bold/italic, links, escaping, lists, blockquote,
   code blocks, hr.
 - `affirmations.test.ts` (4) — deck non-empty, fields present, deterministic daily pick,
   cycle wrap.
+- `challenge.test.ts` (5) — sha256 proof computation matches the expected 16-hex
+  prefix, nonce handling, edge inputs.
 
 Run (targeted):
 ```bash
@@ -762,14 +841,19 @@ manifesto count, traversal 400. It is removed after each run (not committed).
 
 `scripts/deploy.sh [host=thinkcentre]`:
 1. `cargo build --release`
-2. `VITE_ALLOW_DEV_LOGIN=0 npm run build` (web)
+2. `npm run build` (web — plain; no dev-login variant exists)
 3. rsync release binary + migrations + manifestos → `$DEPLOY_DIR`;
    rsync web/build → `/var/www/streakforge`
-4. write `.env` (prod values, placeholder SESSION_SECRET — replace before/after)
+4. write `.env` (prod values, placeholder SESSION_SECRET + DB password)
 5. install systemd unit (enable + restart)
 6. print verification hint
 
-After first deploy, set a real secret:
+**Production secrets live in the Hermes profile `.env`** on the dev machine
+(`~/.hermes/profiles/coding/.env`): `STREAKFORGE_SESSION_SECRET` (random 64-hex)
+and `STREAKFORGE_DB_PASSWORD` (random; rotated on ThinkCentre). `deploy.sh` no
+longer writes real secrets to the remote `.env` — set/rotate them on thinkcentre
+before starting the service:
+
 ```bash
 SECRET=$(openssl rand -hex 32)
 ssh thinkcentre "sudo sed -i 's|^SESSION_SECRET=.*|SESSION_SECRET=$SECRET|' /personal/documents/code/streakforge/.env && sudo systemctl restart streakforge"
@@ -777,8 +861,9 @@ ssh thinkcentre "sudo sed -i 's|^SESSION_SECRET=.*|SESSION_SECRET=$SECRET|' /per
 
 ### 17.3 Local dev
 
-`scripts/dev.sh` builds the frontend with dev-login and runs the backend with
-`ALLOW_DEV_LOGIN=1`, `WEB_BUILD_DIR` + `MANIFESTOS_DIR` set to repo paths, `cargo run`.
+`scripts/dev.sh` builds the frontend (`npm run build`) and runs the backend with
+`WEB_BUILD_DIR` + `MANIFESTOS_DIR` set to repo paths, `cargo run`. Register a
+local account in the UI to log in.
 
 `scripts/seed.sql` inserts demo users + historical logs (iron_will 10-day streak,
 daily_dave 6-day, streak_queen broken 12-day, noob_forger, late_night) for a lively
@@ -793,17 +878,18 @@ psql -h 127.0.0.1 -U streakforge -d streakforge -f scripts/seed.sql
 
 | Var | Local default | Prod (ThinkCentre .env) | Purpose |
 |-----|---------------|-------------------------|---------|
-| `DATABASE_URL` | `postgres://streakforge:streakforge_dev@127.0.0.1:5432/streakforge` | `postgres://streakforge:streakforge_prod@127.0.0.1:5432/streakforge` | Postgres DSN |
-| `SESSION_SECRET` | dev-only-insecure... | random 64-hex | cookie signing key |
-| `X_CLIENT_ID` | — (unset → X login disabled) | — | X OAuth client id |
-| `X_CLIENT_SECRET` | — | — | X OAuth client secret |
-| `PUBLIC_URL` | `http://127.0.0.1:8787` | `http://127.0.0.1:8001` | OAuth redirect base + CORS origin |
-| `ALLOW_DEV_LOGIN` | `1` | `0` | enable dev-login endpoint |
+| `DATABASE_URL` | `postgres://streakforge:***@127.0.0.1:5432/streakforge` | `postgres://streakforge:***@127.0.0.1:5432/streakforge` | Postgres DSN (prod password random, saved as `STREAKFORGE_DB_PASSWORD` in the Hermes profile `.env`) |
+| `SESSION_SECRET` | dev-only-insecure... | random 64-hex (saved as `STREAKFORGE_SESSION_SECRET` in the Hermes profile `.env`) | cookie signing key |
+| `PUBLIC_URL` | `http://127.0.0.1:8787` | `http://127.0.0.1:8001` | CORS origin |
 | `SECURE_COOKIES` | `0` | `0` (set 1 behind HTTPS) | cookie Secure flag |
 | `WEB_BUILD_DIR` | `./web/build` | `/var/www/streakforge` | SPA static dir |
 | `MANIFESTOS_DIR` | `./manifestos` | `/personal/documents/code/streakforge/manifestos` | manifesto docs dir |
 | `BIND_ADDR` | `127.0.0.1:8787` | `127.0.0.1:8001` | listen address |
 | `RUST_LOG` | (env) | `info` | tracing filter |
+
+Removed with the X OAuth / dev-login rework: `X_CLIENT_ID`, `X_CLIENT_SECRET`,
+`ALLOW_DEV_LOGIN`, and the frontend build-time `VITE_ALLOW_DEV_LOGIN` no longer
+exist anywhere in the codebase or deployment.
 
 Note: `REDIS_URL` is in config.rs but unused by any code path (rate limiting is
 DB-based).
@@ -828,6 +914,12 @@ Per the owner's conventions (also used for FicHub):
 ## 20. Git History & Decision Log
 
 ```
+d667aea fix(api): 404 unknown /api/* paths instead of SPA shell fallback
+7e60488 chore(deploy): use random SESSION_SECRET + DB password (rotated on ThinkCentre)
+33c296f docs: update README/STATUS + deploy.sh for local auth (drop X OAuth/dev-login)
+917c1cd merge: local auth UI (login/register form, social URL)
+7765323 feat(web): username/password auth UI + social URL, drop X/dev-login
+9aa2817 feat(auth): local username/password auth replaces X OAuth + dev-login
 c226861 docs: clarify deploy.sh serves directly on 8001 (no nginx)
 1e99bce chore: add ThinkCentre deploy script (mirrors fichub pattern)
 8e01e64 feat: add affirmation drill with wlw-style counter
@@ -844,13 +936,15 @@ Decision log (why things are the way they are):
    use `{period}` / `{username}`.
 3. **tower-sessions version pairing** — tower-sessions 0.14 + sqlx-store 0.15 both use
    tower-sessions-core 0.14. Other pairs (0.13/0.13, 0.15/0.15, 0.14/0.14) mismatch.
-4. **oauth2 4.x API** — `BasicClient::new(id, Some(secret), auth_url, Some(token_url))`
-   (no set_client_secret/set_auth_uri), `request_async(oauth2::reqwest::async_http_client)`,
-   and `TokenResponse` trait must be imported for `.access_token()`.
+4. **Local auth replaces X OAuth + dev-login** (`9aa2817`) — no external
+   dependencies, no dev/prod auth asymmetry, and bot-dissuasion (honeypot + form
+   timing + sha256 nonce challenge) protects the public forms. The `argon2` crate
+   replaced the `oauth2` crate; `reqwest` is kept but unused for auth.
 5. **AppState lives in lib.rs** — so integration tests and the binary share it; main.rs
    uses `streakforge_api::*`.
 6. **SPA fallback must be a handler, not ServeDir** — ServeDir alone 404s SPA routes;
    main.rs has a `spa_fallback` handler serving index.html for non-/api, non-/`_app`.
+   Since `d667aea`, unknown `/api/*` paths return 404 (the fallback refuses `/api/`).
 7. **CSS `//` comments break the bundle** — Vite kept `//` comments in the CSS; the
    browser dropped the `:root` rule → all vars empty. Use `/* */`.
 8. **adapter-static, not adapter-node** — for a Rust-hosted SPA, adapter-static with
@@ -860,9 +954,10 @@ Decision log (why things are the way they are):
 10. **activity_feed limit param** — function takes `int`; bind i64 → `$2::int`.
 11. **Migration 0003 redefines 0002 functions** — 0002 was already applied (checksum
     locked); edits to it would fail VersionMismatch. New function definitions go in
-    new migrations.
-12. **Dev-login button hidden in prod builds** — `import.meta.env.DEV` is statically
-    false; the button requires `VITE_ALLOW_DEV_LOGIN=1` at build time.
+    new migrations. (0004 follows the same rule: new columns, never edits.)
+12. **Secrets out of the repo** (`7e60488`) — random `SESSION_SECRET` + DB password
+    live in the Hermes profile `.env` on the dev machine, not in deploy.sh or the
+    remote `.env` writes.
 13. **nginx not used on ThinkCentre** — fichub serves directly on 8000; streakforge
     mirrors on 8001.
 14. **Rate limits per kind** — drill reps have their own 1/hr + 5/day budget so the
@@ -874,13 +969,17 @@ Decision log (why things are the way they are):
 
 All of the following were actually exercised (not assumed):
 
-- **Backend**: `cargo test --test integration` → 6 passed (each run).
-- **Frontend**: `npx vitest run` → 24 passed; `npm run check` → 0 errors.
-- **API smoke (curl)**: dev-login 303; log 201; second log 429 (hourly);
-  5th log 201 / 6th 429 (daily); leaderboard daily/weekly/alltime correct ranks;
-  UOTD = late_night (6 today); profiles/streaks correct (iron_will 10, streak_queen
-  0/12); feed pagination; profile PATCH (update + 400 invalid username + 409 dup);
-  unauth 401 on /stats, /logs POST, /profile PATCH; dev-login 401 when disabled.
+- **Backend**: `cargo test --test integration` → 13 passed (each run);
+  `cargo test --lib` (auth unit tests) → 8 passed.
+- **Frontend**: `npx vitest run` → 33 passed; `npm run check` → 0 errors.
+- **API smoke (curl)**: register 201 (session set); duplicate register 409; login
+  200 with correct credentials / 401 generic with wrong ones; bot-dissuasion
+  rejects missing honeypot, out-of-window form timing, and bad challenge proof
+  (400); log 201; second log 429 (hourly); 5th log 201 / 6th 429 (daily);
+  leaderboard daily/weekly/alltime correct ranks; UOTD = late_night (6 today);
+  profiles/streaks correct (iron_will 10, streak_queen 0/12); feed pagination;
+  profile PATCH (update + 400 invalid username + 409 dup + social_url set/clear);
+  unauth 401 on /stats, /logs POST, /profile PATCH.
 - **Separate budgets**: affirmation 201 → affirmation 429 → habit 201.
 - **Manifesto**: list 9 docs; content JSON; traversal `%2e%2e%2fetc%2fpasswd` → 400;
   missing → 404.
@@ -891,8 +990,9 @@ All of the following were actually exercised (not assumed):
 - **Theme computed styles**: bg rgb(10,10,10); body Inter; counter Roboto Mono 88px;
   digits black #6b7280 / green #22c55e; UOTD gold #d4a017.
 - **Deploy (ThinkCentre)**: systemd active; root/drill/api 200; assets 200;
-  manifesto 9; unauth 401; dev-login disabled; port 8001 listening; fichub 8000
-  untouched; survives restart; random SESSION_SECRET.
+  manifesto 9; unauth 401; register/login work (bot-dissuaded); unknown /api/*
+  → 404; port 8001 listening; fichub 8000 untouched; survives restart; random
+  SESSION_SECRET + DB password (in Hermes profile `.env`).
 - **Push**: private repo created (id 241) at opencommit.eu/MagicZhang/streakforge;
   main pushed at c226861; private:true confirmed via API.
 
@@ -903,10 +1003,11 @@ All of the following were actually exercised (not assumed):
 1. **svelte-check warnings (2)**: deprecated `<slot />` in Navbar.svelte (+layout) and
    a self-closing non-void `<div style="flex:1;" />` in +page.svelte. Cosmetic; no
    errors. (Can be cleaned with `{@render}` + explicit close tag.)
-2. **X login requires real credentials** — without `X_CLIENT_ID`/`X_CLIENT_SECRET`,
-   `/api/auth/x` returns 400 "X login not configured"; dev-login is the local path.
-3. **PUBLIC_URL matters for OAuth + CORS** — must match the externally-reachable URL
-   when behind the tunnel, or the redirect URI won't match the X app config.
+2. **Public auth forms require JS** — the sha256 nonce challenge, form timing, and
+   honeypot are enforced server-side on register/login; a client with JS disabled
+   or a skewed clock gets 400 "Invalid form submission". By design (bot-dissuasion).
+3. **PUBLIC_URL matters for CORS** — must match the externally-reachable URL when
+   behind the tunnel, or credentialed requests from the browser are blocked.
 4. **Migration checksum lock** — never edit an applied migration; append new ones.
 5. **Session cookie secret** — rotating it logs everyone out (fine); the deployed
    secret was set post-deploy via sed + restart.
@@ -929,7 +1030,7 @@ All of the following were actually exercised (not assumed):
 
 In scope for future iterations (owner-driven):
 - Cloudflare route for the tunnel (dashboard, not code).
-- X OAuth live credentials + HTTPS termination (SECURE_COOKIES=1).
+- HTTPS termination (SECURE_COOKIES=1) behind the tunnel.
 - Possibly multiple habit types (schema is `kind`-extensible; add values to the check
   constraint).
 
@@ -948,19 +1049,23 @@ Deliberately out of scope (v1):
 
 ## 24. Request Lifecycle Walkthrough
 
-### 24.1 Login (X OAuth)
+### 24.1 Register / login (bot-dissuaded local auth)
 
 ```
-Browser ──GET /api/auth/x──────────────────────────────▶ axum router
-   ◀──303 redirect── X authorize URL (PKCE challenge, csrf state stored in session)
-X ──user approves──▶ redirects to {PUBLIC_URL}/api/auth/x/callback?code=..&state=..
-   ──GET /api/auth/x/callback─────────────────────────▶ axum
-   │  verify state == session["oauth_csrf"]
-   │  exchange code (oauth2 + async_http_client) → access token
-   │  GET https://api.twitter.com/2/users/me (bearer) → {id, username, name}
-   │  upsert_profile(pool, xuser, "x") → SessionUser
-   │  session.insert("user", user); clear oauth_csrf/verifier
-   ◀──303 redirect── /dashboard (Set-Cookie: id=<signed>)
+Browser ──GET /api/auth/nonce──────────────────────────▶ axum
+   ◀──200── {"nonce": "<32-hex>"}
+Browser (JS) computes proof = sha256(nonce || username || password)[0..16]
+   ──POST /api/auth/register | /api/auth/login────────▶ axum
+   │  validate_auth_form(body):                       (all failures → 400 generic)
+   │    honeypot "website" empty?                     ("Invalid form submission")
+   │    form open time within 3s..10min?              (server clock vs form_opened_at)
+   │    challenge_proof == sha256(nonce||user||pass)[0..16]?
+   │  register: username valid (2-30 [a-zA-Z0-9_]), password 8-1024
+   │            Argon2id hash → INSERT profiles (provider='local')
+   │  login:    SELECT profile by username; Argon2id verify (dummy hash for
+   │            unknown users → generic 401 "Invalid username or password")
+   │  session.insert("user", SessionUser)
+   ◀──201 (register) | 200 (login)── SessionUser JSON (Set-Cookie: id=<signed>)
 ```
 
 ### 24.2 Log a completion (rate-limited)
@@ -1029,8 +1134,10 @@ restart becomes a problem, apply the one-line fix.
 | tower-sessions | 0.14 | **must pair** with sqlx-store 0.15 |
 | tower-sessions-sqlx-store | 0.15 | uses core 0.14 (same as sessions 0.14) |
 | sqlx | 0.8 (postgres, migrate, time, uuid, chrono) | runtime queries + embedded migrations |
-| oauth2 | 4 | PKCE flow |
-| reqwest | 0.12 (rustls, json) | X API + async_http_client |
+| argon2 | 0.5 | Argon2id password hashing (PHC strings) |
+| rand | 0.8 | nonce generation, salt RNG |
+| sha2 | 0.10 | JS challenge proof (`sha256(nonce‖username‖password)[0..16]`) |
+| reqwest | 0.12 (rustls, json) | kept from the X-OAuth era; unused for auth |
 | serde / serde_json | 1 | DTOs |
 | time | 0.3 (serde-well-known) | OffsetDateTime, Rfc3339 |
 | uuid | 1 (v4, serde) | profile ids |
@@ -1045,12 +1152,12 @@ Frontend deps (package.json): `svelte ^5`, `@sveltejs/kit ^2`, `@sveltejs/adapte
 
 - Add the Cloudflare tunnel route in the dashboard: hostname → `http://192.168.1.13:8001`.
 - Apply the session-key fix (Section 25) if restart-logout becomes annoying.
-- Wire real X OAuth credentials when available (X_CLIENT_ID / X_CLIENT_SECRET) and set
-  PUBLIC_URL to the tunnel URL.
 - Consider `SECURE_COOKIES=1` once behind HTTPS.
 - The `kind` check constraint is extensible: adding a new habit type = new migration
   with `ALTER TABLE ... DROP CONSTRAINT ... ADD CONSTRAINT ... check (kind in (...))`
   plus a kind-filtered community query if it should stay private.
+- If bot registrations ever become a problem, the form-timing + nonce challenge can
+  be tightened (e.g. longer timing window, per-IP rate limits on /auth/nonce).
 
 ---
 

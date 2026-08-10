@@ -78,13 +78,15 @@ DTOs: `LogRequest`, `LogResponse`, `DrillResponse`, `StatsResponse`, `FeedItem`,
 
 ### 2.4 `auth.rs` — authentication
 
-- `XOAuth` struct wraps `Option<BasicClient>` (None when env creds missing).
-- `start()` → (authorize_url, csrf, verifier) via PKCE.
-- `exchange(code, verifier)` → access token via `oauth2::reqwest::async_http_client`.
-- `fetch_x_user(token)` → `XUserData {id, username, name}` from /2/users/me.
-- `upsert_profile(pool, xuser, provider)` → SessionUser (username collision loop).
-- Handlers: `me`, `logout`, `login_start`, `login_callback`, `dev_login`.
-- `sanitize_username(raw)` — lowercase-safe ASCII alnum/underscore, 2..30 chars.
+- Local username/password (Argon2id PHC) + tower-sessions cookies.
+- `hash_password` / `verify_password` — Argon2id `m=19456, t=2, p=1`.
+- Bot-dissuasion helpers: `validate_auth_form` (honeypot → form timing
+  [3s,10min] → sha256 PoW proof), `compute_challenge_proof` /
+  `challenge_proof_valid`, `fresh_nonce()` (16 random bytes hex).
+- `register` / `login` handlers insert/verify `profiles` and start a session.
+- Handlers: `me`, `logout`, `register`, `login`, `nonce`.
+- `fetch_profile(pool, id)` refreshes the SessionUser from the DB.
+- `sanitize_username(raw)` — ASCII alnum/underscore, 2..30 chars.
 
 ### 2.5 `manifesto.rs` — document server
 
@@ -99,7 +101,7 @@ DTOs: `LogRequest`, `LogResponse`, `DrillResponse`, `StatsResponse`, `FeedItem`,
 - db: `connect(dsn)` (10 max conns), `run_migrations(pool)`.
 - error: `ApiError {status, message}` with `IntoResponse` (JSON `{error}`),
   `From<sqlx::Error>` (unique → 409, RowNotFound → 404), `From<redis::RedisError>`,
-  `From<serde_json::Error>`, `From<oauth2::url::ParseError>`, `From<session Error>`.
+  `From<serde_json::Error>`, `From<session Error>`.
 
 ---
 
@@ -134,7 +136,7 @@ redirect (401).
 | Route | Data source | Key behaviors |
 |-------|-------------|---------------|
 | `/` | userOfTheDay, leaderboard(daily), feed, /api/total | hero counter, marquee, UOTD card, top-25 board, recent activity |
-| `/login` | — | X button (always), dev button (only if VITE_ALLOW_DEV_LOGIN) |
+| `/login` | — | SIGN IN / REGISTER tabs (honeypot + timing + JS challenge) |
 | `/dashboard` | stats() | stat cards, LogButton, 30-day heatmap, recent logs; 401→/login |
 | `/drill` | drill() | counter, affirmation card + prev/next, REPEAT, stats, heatmap |
 | `/leaderboard` | leaderboard(period), userOfTheDay | tabs DAILY/WEEKLY/ALL-TIME, UOTD card, board |

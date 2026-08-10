@@ -82,7 +82,7 @@ streakforge/
 │   │   ├── main.rs          # router, session layer, SPA fallback
 │   │   ├── lib.rs           # AppState + module facade
 │   │   ├── api.rs           # logging, stats, leaderboards, feed, profiles
-│   │   ├── auth.rs          # X OAuth + dev login + session helpers
+│   │   ├── auth.rs          # register/login/nonce, Argon2id, bot-dissuasion
 │   │   ├── config.rs        # env config
 │   │   ├── db.rs            # pool + migrations
 │   │   └── error.rs         # ApiError
@@ -131,7 +131,7 @@ The server listens on `http://127.0.0.1:8787` by default.
 ```bash
 cd web
 npm install
-npm run build   # production build — no dev-login, no X OAuth
+npm run build   # production build
 ```
 
 The SPA is served by the Rust backend at `/` (adapter-static build).
@@ -215,7 +215,10 @@ npm test   # vitest
   8000; nginx is inactive there). Exposed via the Cloudflare tunnel (dashboard-managed
   route → `http://192.168.1.13:8001`).
 - Deploy with `./scripts/deploy.sh thinkcentre` (builds release, syncs, installs unit).
-- After deploy, set a random `SESSION_SECRET` (see OPERATIONS.md §3.1).
+- `SESSION_SECRET` + the Postgres DB password are random and kept in the Hermes
+  profile `.env` on the dev machine (`~/.hermes/profiles/coding/.env` →
+  `STREAKFORGE_SESSION_SECRET` / `STREAKFORGE_DB_PASSWORD`); rotate them on
+  thinkcentre after deploy (see OPERATIONS.md §3.1).
 - Build the frontend with a plain `npm run build` (no dev-login variant exists).
 - Set `SECURE_COOKIES=1` behind HTTPS.
 - Rate limiting is DB-query based (simple, reliable for v1); a Redis sliding window

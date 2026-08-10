@@ -55,7 +55,7 @@ Last updated: 2026-08-10
 - Backend: `cargo test --test integration` — 13/13 pass; `cargo test --lib` — 8/8 pass.
 - Frontend: `vitest run` — 33/33 pass; `svelte-check` — 0 errors.
 - Deployed: thinkcentre port 8001, systemd active, all routes 200, auth enforced,
-  dev-login disabled; pushed private to opencommit.eu/MagicZhang/streakforge.
+  dev-login removed (routes 404); pushed private to opencommit.eu/MagicZhang/streakforge.
 
 ## Documentation
 

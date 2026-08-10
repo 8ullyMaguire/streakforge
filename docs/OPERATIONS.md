@@ -9,8 +9,8 @@ ThinkCentre production instance.
 
 | Environment | Host | Backend | DB | Frontend | Auth |
 |-------------|------|---------|----|----------|------|
-| local dev | this machine (gamingpc/dev box) | `127.0.0.1:8787` | local Postgres, `streakforge` / `streakforge_dev` | `web/build`, dev-login ON | dev-login (+ X if creds set) |
-| production | thinkcentre (192.168.1.13) | `127.0.0.1:8001` (systemd) | ThinkCentre Postgres, `streakforge` / `streakforge_prod` | `/var/www/streakforge`, dev-login OFF | X only |
+| local dev | this machine (gamingpc/dev box) | `127.0.0.1:8787` | local Postgres, `streakforge` / `streakforge_dev` | `web/build` | local username/password (register/login) |
+| production | thinkcentre (192.168.1.13) | `127.0.0.1:8001` (systemd) | ThinkCentre Postgres, `streakforge` / `streakforge_prod` | `/var/www/streakforge` | local username/password (register/login) |
 
 ---
 
@@ -26,13 +26,14 @@ ThinkCentre production instance.
   sudo -u postgres psql -c "CREATE DATABASE streakforge OWNER streakforge;"
   sudo -u postgres psql -c "CREATE DATABASE streakforge_test OWNER streakforge;"
   ```
-- (Optional) X OAuth app credentials for real login.
+- No API keys needed — auth is local username/password (Argon2id); see
+  SPEC §9 for the register/login/nonce endpoints and bot-dissuasion.
 
 ### 2.2 One-shot dev
 
 ```bash
 ./scripts/dev.sh
-# builds web (dev-login on), runs cargo run on :8787
+# builds web, runs cargo run on :8787
 ```
 
 ### 2.3 Manual dev (two terminals)
@@ -40,8 +41,7 @@ ThinkCentre production instance.
 ```bash
 # terminal A — backend
 cd backend
-ALLOW_DEV_LOGIN=1 \
-  WEB_BUILD_DIR="$(pwd)/../web/build" \
+WEB_BUILD_DIR="$(pwd)/../web/build" \
   MANIFESTOS_DIR="$(pwd)/../manifestos" \
   RUST_LOG=info \
   cargo run
@@ -67,12 +67,12 @@ noob_forger, late_night (3 today).
 
 ```bash
 cd backend
-DATABASE_URL=postgres://streakforge:streakforge_dev@127.0.0.1:5432/streakforge_test \
-  cargo test --test integration        # 6 tests, ~0.3s
+DATABASE_URL=postgres://streakforge:***@127.0.0.1:5432/streakforge_test \
+  cargo test --test integration        # 13 tests
 
 cd ../web
 npm run check                          # svelte-check
-npx vitest run src/lib/api.test.ts     # targeted file(s) — 24 total
+npx vitest run src/lib/api.test.ts     # targeted file(s) — 33 total
 ```
 
 ---
@@ -85,11 +85,16 @@ npx vitest run src/lib/api.test.ts     # targeted file(s) — 24 total
 ./scripts/deploy.sh thinkcentre
 ```
 
-Steps (see also SPEC §17): build release, build web (no dev login), rsync binary +
-migrations + manifestos → `/personal/documents/code/streakforge`, rsync web/build →
-`/var/www/streakforge`, write `.env`, install/enable/restart systemd unit.
+Steps (see also SPEC §17): build release, `npm run build` (plain — no dev-login
+variant exists anymore), rsync binary + migrations + manifestos →
+`/personal/documents/code/streakforge`, rsync web/build → `/var/www/streakforge`,
+write `.env`, install/enable/restart systemd unit.
 
-After first deploy (or any redeploy), set a real session secret:
+`deploy.sh` no longer writes real secrets to the remote `.env`: the random
+`SESSION_SECRET` and the Postgres DB password live in the **Hermes profile `.env`**
+(`~/.hermes/profiles/coding/.env` on this machine) as `STREAKFORGE_SESSION_SECRET`
+and `STREAKFORGE_DB_PASSWORD`. When deploying, set them on thinkcentre before
+starting the service (or rotate them there):
 
 ```bash
 SECRET=$(openssl rand -hex 32)
@@ -163,7 +168,8 @@ ssh thinkcentre 'sudo journalctl -u streakforge -n 50 --no-pager'
 ```
 
 Expected healthy: service `active`; root 200; `/api/total` returns `{"total":N}`;
-port 8001 listening.
+port 8001 listening. Unknown `/api/*` paths return 404 (they do **not** fall
+through to the SPA shell).
 
 ---
 
@@ -190,10 +196,13 @@ The built CSS contains `//` comments (Vite doesn't strip them); browsers drop th
 Expected: the signing key is `Key::generate()` per boot (SPEC §25). Apply the
 `Key::from(cfg.session_secret.as_bytes())` fix if you want persistent sessions.
 
-### 5.5 `/api/auth/x` returns 400 "X login not configured"
+### 5.5 Register/login rejected with "Invalid form submission"
 
-`X_CLIENT_ID`/`X_CLIENT_SECRET` are unset. Either set them (and PUBLIC_URL to the
-reachable URL) or use dev-login locally.
+The public auth forms are bot-dissuaded: the honeypot field must be empty, the
+form must have been open 3s–10min, and the JS challenge proof must match
+`sha256(nonce || username || password)` truncated to 16 hex chars. If a legit
+submission gets 400, the client clock is skewed (form timing) or the JS challenge
+didn't run (hardened browser, script blocked). Retry after re-fetching the nonce.
 
 ### 5.6 Manifesto 404 / missing docs
 
