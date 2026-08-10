@@ -23,6 +23,14 @@
 			error = e instanceof Error ? e.message : 'Profile not found';
 		}
 	}
+
+	function hostnameOf(url: string): string {
+		try {
+			return new URL(url).hostname.replace(/^www\./, '');
+		} catch {
+			return url;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -44,6 +52,18 @@
 			/>
 			<h1 style="margin:0;font-size:26px;letter-spacing:0.02em;">{profile.display_name ?? profile.username}</h1>
 			<p style="color:var(--text-dim);font-size:14px;margin:4px 0 16px;">@{profile.username}</p>
+			{#if profile.social_url}
+				<p style="margin:0 0 16px;">
+					<a
+						class="social-link"
+						href={profile.social_url}
+						target="_blank"
+						rel="noopener noreferrer"
+					>
+						↗ {hostnameOf(profile.social_url)}
+					</a>
+				</p>
+			{/if}
 			<div class="stat-grid">
 				<div class="stat-card">
 					<div class="label">Current streak</div>

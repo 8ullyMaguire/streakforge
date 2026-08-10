@@ -1,6 +1,7 @@
 // API client — talks to the Rust backend at /api/*
 import type {
 	ApiError,
+	AuthPayload,
 	DrillResponse,
 	FeedItem,
 	Leaderboard,
@@ -47,6 +48,9 @@ export class ApiRequestError extends Error {
 export const api = {
 	me: () => request<SessionUser>('/auth/me'),
 	logout: () => request<void>('/auth/logout', { method: 'POST' }),
+	nonce: () => request<{ nonce: string }>('/auth/nonce'),
+	register: (payload: AuthPayload) => request<SessionUser>('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
+	login: (payload: AuthPayload) => request<SessionUser>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
 	logHabit: (note?: string, kind: LogKind = 'habit') =>
 		request<{ stats: Stats }>('/logs', {
 			method: 'POST',
@@ -61,7 +65,7 @@ export const api = {
 			`/feed${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`
 		),
 	profile: (username: string) => request<Profile>(`/profile/${encodeURIComponent(username)}`),
-	updateProfile: (data: { username?: string; display_name?: string; avatar_url?: string }) =>
+	updateProfile: (data: { username?: string; display_name?: string; avatar_url?: string; social_url?: string }) =>
 		request<Profile>('/profile', { method: 'PATCH', body: JSON.stringify(data) }),
 	manifestoList: () => request<ManifestoList>('/manifesto'),
 	manifestoDoc: async (id: string) => {

@@ -8,6 +8,7 @@
 	let username = $state('');
 	let displayName = $state('');
 	let avatarUrl = $state('');
+	let socialUrl = $state('');
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
@@ -17,6 +18,7 @@
 			username = me.username;
 			displayName = me.display_name ?? '';
 			avatarUrl = me.avatar_url ?? '';
+			socialUrl = me.social_url ?? '';
 		} catch (e) {
 			if (e instanceof ApiRequestError && e.status === 401) {
 				window.location.href = '/login';
@@ -33,7 +35,8 @@
 			const p = await api.updateProfile({
 				username: username.trim() || undefined,
 				display_name: displayName.trim() || undefined,
-				avatar_url: avatarUrl.trim() || undefined
+				avatar_url: avatarUrl.trim() || undefined,
+				social_url: socialUrl.trim() || undefined
 			});
 			pushToast('Profile updated.');
 			if (me) me.username = p.username;
@@ -75,6 +78,13 @@
 						src={avatarUrl || `https://api.dicebear.com/7.x/identicon/svg?seed=${username || 'anon'}`}
 						alt=""
 					/>
+				</div>
+			</div>
+			<div class="form-row">
+				<label for="social">Social URL</label>
+				<input id="social" bind:value={socialUrl} placeholder="https://github.com/you" />
+				<div style="margin-top:6px;color:var(--text-dim);font-size:12px;">
+					Shown on your public profile. http(s) link or empty.
 				</div>
 			</div>
 			{#if error}
