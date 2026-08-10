@@ -11,11 +11,11 @@
 - **What**: StreakForge — habit & streak tracker with community leaderboards,
   wlw.grok.me-inspired dark theme (counter, marquee, red/gold, mono digits).
 - **Stack**: Rust (axum) + SvelteKit (Svelte 5, adapter-static SPA) + PostgreSQL.
-- **Where**: local repo `~/code/streakforge`; production on thinkcentre
+- **Where**: local repo `~/code/projects/streakforge`; production on thinkcentre
   (192.168.1.13) port 8001 (systemd `streakforge.service`); private mirror on
   opencommit.eu/MagicZhang/streakforge.
-- **Status**: fully working + verified. 6 backend tests, 24 frontend tests,
-  deployed, pushed. Everything committed (`main` at `c226861`).
+- **Status**: fully working + verified. 13 integration + 8 lib tests, 33 frontend tests,
+  deployed, pushed. Everything committed (`main` at `ea5a5c6`).
 
 ---
 
@@ -23,9 +23,9 @@
 
 | Fact | Value |
 |------|-------|
-| Repo | `/home/alvaro/code/streakforge` |
+| Repo | `/home/alvaro/code/projects/streakforge` |
 | Backend dev port | 127.0.0.1:8787 |
-| Prod port | 127.0.0.1:8001 (thinkcentre) |
+| Prod port | 127.0.0.1:8001 (thinkcentre) — public: https://streakforge.polarisocial.xyz |
 | DB dev | local `streakforge` / `streakforge_dev` |
 | DB prod | thinkcentre `streakforge` / random (in Hermes profile `.env` as `STREAKFORGE_DB_PASSWORD`) |
 | Frontend build | `web/build` (adapter-static), served by Rust |
@@ -83,16 +83,20 @@
 - `npx vitest run` → 33 passed. `npm run check` → 0 errors.
 - Prod: root/drill/api 200, unauth 401, register/login work (bot-dissuaded), port
   8001, random `SESSION_SECRET` + DB password (in the Hermes profile `.env`).
-- Repo pushed private: opencommit.eu/MagicZhang/streakforge (id 241, main @ c226861).
+- Repo pushed private: opencommit.eu/MagicZhang/streakforge (id 241, main @ ea5a5c6).
 
 ---
 
 ## Immediate next actions (if continuing)
 
-1. **Cloudflare route** (user-side, dashboard): add route → `http://192.168.1.13:8001`.
+1. ~~**Cloudflare route** — DONE: https://streakforge.polarisocial.xyz routes to
+   `http://192.168.1.13:8001`~~ (verify it still works when you resume).
 2. **(Optional) session-key fix** — SPEC §25: `Key::from(cfg.session_secret.as_bytes())`
    so sessions survive restarts.
 3. **(Optional) HTTPS** — `SECURE_COOKIES=1` once behind the tunnel.
+
+Sample account (live, created 2026-08-10): `sample_user` / `SamplePass123!` at
+https://streakforge.polarisocial.xyz — usable for manual QA; delete when done.
 
 ---
 

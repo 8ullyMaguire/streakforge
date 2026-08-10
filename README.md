@@ -212,8 +212,8 @@ npm test   # vitest
 
 - Production runs on **thinkcentre** (192.168.1.13) port **8001** as
   `streakforge.service` (systemd), serving static + API directly (mirrors fichub on
-  8000; nginx is inactive there). Exposed via the Cloudflare tunnel (dashboard-managed
-  route → `http://192.168.1.13:8001`).
+  8000; nginx is inactive there). Public URL: **https://streakforge.polarisocial.xyz**
+  (Cloudflare tunnel, dashboard-managed route → `http://192.168.1.13:8001`).
 - Deploy with `./scripts/deploy.sh thinkcentre` (builds release, syncs, installs unit).
 - `SESSION_SECRET` + the Postgres DB password are random and kept in the Hermes
   profile `.env` on the dev machine (`~/.hermes/profiles/coding/.env` →

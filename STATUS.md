@@ -23,8 +23,8 @@ Last updated: 2026-08-10
 - [x] SPA static serving + client-route fallback (adapter-static build)
 - [x] Manifesto: `/api/manifesto` + `/api/manifesto/{id}` — serves markdown docs
       from a configurable directory (path-traversal sanitized)
-- [x] Integration tests (6 passing) for streak calc, leaderboards, UOTD, feed,
-      affirmation-kind separation
+- [x] Integration tests (13 passing) for streak calc, leaderboards, UOTD, feed,
+      affirmation-kind separation, auth (register/login/social_url)
 
 ### Frontend (SvelteKit / Svelte 5)
 - [x] wlw-style dark theme (near-black, red/gold, Inter + Roboto Mono)
@@ -42,8 +42,8 @@ Last updated: 2026-08-10
 - [x] Drill: wlw-style big counter, affirmation deck, REPEAT (rate-limit aware),
       streak cards + heatmap
 - [x] Toasts, skeletons, empty states, 401 redirect to /login
-- [x] Frontend tests (24 passing): api utils, validation, markdown renderer,
-      affirmations deck
+- [x] Frontend tests (33 passing): api utils, validation, challenge PoW, markdown
+      renderer, affirmations deck
 - [x] `npm run check` clean (0 errors)
 
 ## Verification evidence
@@ -55,7 +55,8 @@ Last updated: 2026-08-10
 - Backend: `cargo test --test integration` — 13/13 pass; `cargo test --lib` — 8/8 pass.
 - Frontend: `vitest run` — 33/33 pass; `svelte-check` — 0 errors.
 - Deployed: thinkcentre port 8001, systemd active, all routes 200, auth enforced,
-  dev-login removed (routes 404); pushed private to opencommit.eu/MagicZhang/streakforge.
+  dev-login removed (routes 404); public at https://streakforge.polarisocial.xyz;
+  pushed private to opencommit.eu/MagicZhang/streakforge.
 
 ## Documentation
 

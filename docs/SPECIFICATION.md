@@ -165,7 +165,7 @@ The project was created in a single session on 2026-08-10, driven by a design do
 | HTTP client | reqwest 0.12 (rustls) | (kept; no longer used for OAuth) |
 | Icons | lucide-svelte | |
 | Tests | Rust `#[sqlx::test]` integration + Vitest | targeted suites only (see Testing) |
-| Deploy | systemd + Cloudflare tunnel (token-based) | ThinkCentre M720q, port 8001 |
+| Deploy | systemd + Cloudflare tunnel (token-based) | ThinkCentre M720q, port 8001 — public https://streakforge.polarisocial.xyz |
 
 Deliberately **not used** despite the original design doc suggesting them: Next.js,
 Supabase, Tailwind, shadcn/ui, TanStack Query, Vercel. The actual stack is the

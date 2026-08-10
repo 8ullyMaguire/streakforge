@@ -141,7 +141,8 @@ WantedBy=multi-user.target
 
 - Tunnel client: `cloudflared.service` runs `tunnel run --token-file /etc/cloudflared/token`.
 - **Routes are managed in the Cloudflare dashboard** (no host config file).
-- To expose StreakForge: add a route (hostname or path) → `http://192.168.1.13:8001`.
+- Public URL: **https://streakforge.polarisocial.xyz** → `http://192.168.1.13:8001`
+  (route added 2026-08-10; verified 200).
 - FicHub already uses the tunnel for its domain on port 8000.
 
 ### 3.5 nginx
@@ -163,9 +164,17 @@ ssh thinkcentre 'systemctl is-active streakforge; ss -tln | grep 8001'
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8001/
 curl -s http://127.0.0.1:8001/api/total
 
+# Public health (via Cloudflare tunnel)
+curl -s -o /dev/null -w "%{http_code}\n" https://streakforge.polarisocial.xyz/
+curl -s https://streakforge.polarisocial.xyz/api/auth/nonce   # expect {"nonce":"<32-hex>"}
+
 # Logs
 ssh thinkcentre 'sudo journalctl -u streakforge -n 50 --no-pager'
 ```
+
+Manual QA account (live 2026-08-10): `sample_user` / `SamplePass123!` —
+register/login/me/logout all verified against the public URL. Delete the row
+from `profiles` when it's no longer needed.
 
 Expected healthy: service `active`; root 200; `/api/total` returns `{"total":N}`;
 port 8001 listening. Unknown `/api/*` paths return 404 (they do **not** fall
