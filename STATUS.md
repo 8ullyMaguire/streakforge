@@ -16,6 +16,8 @@ Last updated: 2026-08-10
 - [x] All endpoints: /auth/*, /logs, /stats, /leaderboard/*, /user-of-the-day,
       /total, /feed, /profile/*, /profile (PATCH)
 - [x] SPA static serving + client-route fallback (adapter-static build)
+- [x] Manifesto: `/api/manifesto` + `/api/manifesto/{id}` — serves markdown docs
+      from a configurable directory (path-traversal sanitized)
 - [x] Integration tests (5 passing) for streak calc, leaderboards, UOTD, feed
 
 ### Frontend (SvelteKit / Svelte 5)
@@ -29,8 +31,9 @@ Last updated: 2026-08-10
 - [x] Feed: reverse-chronological, LOAD MORE pagination, avatars
 - [x] Profile: public stats, DiceBear avatar fallback
 - [x] Settings: edit username / display name / avatar URL
+- [x] Manifesto: sidebar doc list + rendered markdown viewer (dark theme)
 - [x] Toasts, skeletons, empty states, 401 redirect to /login
-- [x] Frontend tests (12 passing): api utils + validation
+- [x] Frontend tests (20 passing): api utils, validation, markdown renderer
 - [x] `npm run check` clean (0 errors)
 
 ## Verification evidence

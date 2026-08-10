@@ -71,6 +71,16 @@ export interface SessionUser {
 	provider: string;
 }
 
+export interface ManifestoDoc {
+	id: string;
+	title: string;
+	filename: string;
+}
+
+export interface ManifestoList {
+	docs: ManifestoDoc[];
+}
+
 export interface ApiError {
 	error: string;
 }

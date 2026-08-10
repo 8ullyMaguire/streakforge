@@ -4,6 +4,7 @@ import type {
 	FeedItem,
 	Leaderboard,
 	LeaderboardPeriod,
+	ManifestoList,
 	Profile,
 	SessionUser,
 	Stats,
@@ -55,7 +56,14 @@ export const api = {
 		),
 	profile: (username: string) => request<Profile>(`/profile/${encodeURIComponent(username)}`),
 	updateProfile: (data: { username?: string; display_name?: string; avatar_url?: string }) =>
-		request<Profile>('/profile', { method: 'PATCH', body: JSON.stringify(data) })
+		request<Profile>('/profile', { method: 'PATCH', body: JSON.stringify(data) }),
+	manifestoList: () => request<ManifestoList>('/manifesto'),
+	manifestoDoc: async (id: string) => {
+		const res = await request<{ id: string; content: string }>(
+			`/manifesto/${encodeURIComponent(id)}`
+		);
+		return res.content;
+	}
 };
 
 export function timeAgo(iso: string, now: Date = new Date()): string {

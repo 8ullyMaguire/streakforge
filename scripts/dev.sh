@@ -11,5 +11,6 @@ echo "==> Starting backend on http://127.0.0.1:8787"
 cd backend
 ALLOW_DEV_LOGIN=1 \
   WEB_BUILD_DIR="$(pwd)/../web/build" \
+  MANIFESTOS_DIR="$(pwd)/../manifestos" \
   RUST_LOG=info \
   cargo run

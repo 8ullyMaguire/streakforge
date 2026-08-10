@@ -12,6 +12,7 @@ pub struct Config {
     pub dev_login_secret: Option<String>,
     pub secure_cookies: bool,
     pub web_build_dir: String,
+    pub manifestos_dir: String,
 }
 
 impl Config {
@@ -31,6 +32,7 @@ impl Config {
             dev_login_secret: env::var("DEV_LOGIN_SECRET").ok().filter(|s| !s.is_empty()),
             secure_cookies: env::var("SECURE_COOKIES").map(|v| v == "1").unwrap_or(false),
             web_build_dir: env::var("WEB_BUILD_DIR").unwrap_or_else(|_| "./web/build".into()),
+            manifestos_dir: env::var("MANIFESTOS_DIR").unwrap_or_else(|_| "./manifestos".into()),
         }
     }
 }

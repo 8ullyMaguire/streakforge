@@ -29,6 +29,9 @@ highlights, mono-spaced tabular counters, and a scrolling marquee.
 - **Public activity feed** — reverse-chronological, cursor-paginated, with notes.
 - **Profiles** — public username, display name, avatar (DiceBear fallback),
   stats. Editable in Settings.
+- **Manifesto** — a `/manifesto` page serving curated doctrine/training texts
+  (commandments, guides, socials) from the `manifestos/` directory, rendered
+  markdown in the wlw-style theme.
 - **Auth** — X (Twitter) OAuth 2.0 with PKCE, plus a local dev-login for testing.
 - **wlw-style theme** — near-black, red/gold accents, Inter + Roboto Mono,
   tabular green counter digits, scrolling marquee, mobile-first.
@@ -121,6 +124,7 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | `ALLOW_DEV_LOGIN` | `1`                              | Enable `/api/auth/dev-login`         |
 | `SECURE_COOKIES`  | `0`                              | Set to `1` behind HTTPS              |
 | `WEB_BUILD_DIR`   | `./web/build`                    | SPA static dir served by Rust        |
+| `MANIFESTOS_DIR`  | `./manifestos`                   | Directory of manifesto markdown docs |
 | `BIND_ADDR`       | `127.0.0.1:8787`                 | Listen address                       |
 
 ## API Endpoints
@@ -140,6 +144,8 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | GET    | `/api/feed`               | —    | Public feed (cursor + limit)         |
 | GET    | `/api/profile/{username}` | —    | Public profile stats                 |
 | PATCH  | `/api/profile`            | ✓    | Update username/display/avatar       |
+| GET    | `/api/manifesto`          | —    | List manifesto docs                  |
+| GET    | `/api/manifesto/{id}`     | —    | Fetch a manifesto document (markdown)|
 
 ## Business Logic
 

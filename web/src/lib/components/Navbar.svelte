@@ -41,7 +41,8 @@
 	const links = [
 		{ href: '/dashboard', label: 'DASHBOARD' },
 		{ href: '/leaderboard', label: 'LEADERBOARD' },
-		{ href: '/feed', label: 'FEED' }
+		{ href: '/feed', label: 'FEED' },
+		{ href: '/manifesto', label: 'MANIFESTO' }
 	];
 </script>
 

@@ -82,7 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/total", get(streakforge_api::api::get_total))
         .route("/feed", get(streakforge_api::api::get_feed))
         .route("/profile/{username}", get(streakforge_api::api::get_profile))
-        .route("/profile", patch(streakforge_api::api::update_profile));
+        .route("/profile", patch(streakforge_api::api::update_profile))
+        .route("/manifesto", get(streakforge_api::manifesto::list))
+        .route("/manifesto/{id}", get(streakforge_api::manifesto::get));
 
     let app = Router::new()
         .nest("/api", api_router)
