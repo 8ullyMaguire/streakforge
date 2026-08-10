@@ -27,7 +27,7 @@ rsync -az --delete "$ROOT/web/build/" "$HOST:$WWW_DIR/"
 
 echo "==> 4/6 Writing .env"
 ssh "$HOST" "cat > $DEPLOY_DIR/.env" <<'ENV'
-DATABASE_URL=postgres://streakforge:streakforge_prod@127.0.0.1:5432/streakforge
+DATABASE_URL=postgres://streakforge:e3a735af8a52a82b728a06ee6f78229f@127.0.0.1:5432/streakforge
 SESSION_SECRET=c51fb52a3b2cbb1a5850d7862eb2b44954a59f0c93bcde91ec0100008c3c668d
 PUBLIC_URL=http://127.0.0.1:8001
 SECURE_COOKIES=0
