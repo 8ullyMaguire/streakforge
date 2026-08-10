@@ -45,11 +45,19 @@ Last updated: 2026-08-10
 ## Verification evidence
 
 - All API endpoints exercised via curl (auth, logging, rate limits, boards, feed,
-  profile CRUD).
+  profile CRUD, drill separate budgets, manifesto + traversal 400).
 - Browser-tested end-to-end: login → dashboard → log → leaderboard tabs → feed →
-  profile → settings update.
-- Backend: `cargo test` — 5/5 pass.
-- Frontend: `vitest run` — 12/12 pass; `svelte-check` — 0 errors.
+  profile → settings update → drill (counter/card/rate-limit hint) → manifesto.
+- Backend: `cargo test --test integration` — 6/6 pass.
+- Frontend: `vitest run` — 24/24 pass; `svelte-check` — 0 errors.
+- Deployed: thinkcentre port 8001, systemd active, all routes 200, auth enforced,
+  dev-login disabled; pushed private to opencommit.eu/MagicZhang/streakforge.
+
+## Documentation
+
+- `docs/SPECIFICATION.md` (1058 lines), `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`,
+  `docs/SESSION_CONTEXT.md`, expanded `README.md`.
+- Keep all of these current after feature work.
 
 ## Known issues / notes
 

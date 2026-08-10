@@ -8,9 +8,25 @@ Built with **Rust (axum) + SvelteKit (Svelte 5)** and PostgreSQL. The UI theme
 mirrors the aesthetic of wlw.grok.me: near-black background, red accent, gold
 highlights, mono-spaced tabular counters, and a scrolling marquee.
 
-> **Note on content:** This project is a *mechanics clone* of wlw.grok.me's
-> counter/leaderboard/feed pattern. The subject matter here is completely SFW —
-> a habit tracker — with no NSFW elements.
+> **Content note:** the core habit tracker is content-neutral, but the site also
+> hosts the owner's curated BNWO manifesto texts (`/manifesto`) and an affirmation
+> drill (`/drill`) — matching the subject matter of the reference site wlw.grok.me
+> per owner request.
+
+---
+
+## Documentation
+
+Full context lives in `docs/` — read these before working on the code:
+
+| File | Contents |
+|------|----------|
+| `docs/SPECIFICATION.md` | Complete spec (1058 lines): product, data model, API, business logic, security, testing, deployment, decision log, verification evidence |
+| `docs/ARCHITECTURE.md` | Deep dive: module map, data flow, concurrency, migration strategy, extension points |
+| `docs/OPERATIONS.md` | Run/deploy/monitor/troubleshoot (local + thinkcentre prod) |
+| `docs/SESSION_CONTEXT.md` | Session-recovery cheat sheet |
+
+Plus `STATUS.md` for the living dev-status checklist.
 
 ---
 
@@ -193,14 +209,16 @@ npm test   # vitest
 
 ## Deployment Notes
 
-- Build frontend with `VITE_ALLOW_DEV_LOGIN=1 npm run build` (or omit the env
-  var to hide the dev button in production).
-- Run the Rust binary from the repo root (or set `WEB_BUILD_DIR` to an absolute
-  path) so the SPA fallback can find `index.html`.
-- Set `SESSION_SECRET` to a long random value in production.
+- Production runs on **thinkcentre** (192.168.1.13) port **8001** as
+  `streakforge.service` (systemd), serving static + API directly (mirrors fichub on
+  8000; nginx is inactive there). Exposed via the Cloudflare tunnel (dashboard-managed
+  route → `http://192.168.1.13:8001`).
+- Deploy with `./scripts/deploy.sh thinkcentre` (builds release, syncs, installs unit).
+- After deploy, set a random `SESSION_SECRET` (see OPERATIONS.md §3.1).
+- Build frontend with `VITE_ALLOW_DEV_LOGIN=1` for local testing; omit for production.
 - Set `SECURE_COOKIES=1` behind HTTPS.
-- Rate limiting is DB-query based (simple, reliable for v1); a Redis sliding
-  window can replace it later if the free tier becomes limiting.
+- Rate limiting is DB-query based (simple, reliable for v1); a Redis sliding window
+  can replace it later.
 
 ## Roadmap / Out of Scope (v1)
 
