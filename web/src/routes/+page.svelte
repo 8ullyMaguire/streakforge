@@ -59,7 +59,7 @@
 		<a href="/leaderboard" class="btn btn-ghost btn-lg">VIEW LEADERBOARD</a>
 	</div>
 	<p style="color:var(--text-dim);font-size:13px;margin-top:14px;">
-		X login required. Own your submission.
+		Create an account. Own your submission.
 	</p>
 </section>
 

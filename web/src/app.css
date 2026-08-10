@@ -570,6 +570,60 @@ textarea:focus {
 	padding: 28px;
 }
 
+/* Auth tabs (sign in / register toggle) */
+.auth-tabs {
+	display: flex;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	overflow: hidden;
+	margin-bottom: 20px;
+}
+.auth-tab {
+	flex: 1;
+	background: transparent;
+	color: var(--text-dim);
+	border: none;
+	padding: 10px 0;
+	font-size: 13px;
+	letter-spacing: 0.06em;
+	cursor: pointer;
+	transition: background 0.15s, color 0.15s;
+}
+.auth-tab:hover {
+	background: rgba(255, 255, 255, 0.05);
+}
+.auth-tab.active {
+	background: var(--red);
+	color: #fff;
+}
+
+/* Honeypot: hidden from humans, only bots see/fill it */
+.honeypot {
+	position: absolute !important;
+	left: -9999px !important;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	opacity: 0;
+	pointer-events: none;
+}
+
+/* Public profile social link */
+.social-link {
+	display: inline-block;
+	font-size: 13px;
+	color: var(--red);
+	text-decoration: none;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	padding: 4px 12px;
+	transition: border-color 0.15s, background 0.15s;
+}
+.social-link:hover {
+	border-color: var(--red);
+	background: rgba(255, 0, 0, 0.05);
+}
+
 /* Footer */
 .footer {
 	border-top: 1px solid var(--border);

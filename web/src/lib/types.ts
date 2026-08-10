@@ -6,6 +6,7 @@ export interface Profile {
 	username: string;
 	display_name: string | null;
 	avatar_url: string | null;
+	social_url: string | null;
 	created_at: string;
 	streak: number;
 	longest_streak: number;
@@ -74,7 +75,18 @@ export interface SessionUser {
 	username: string;
 	display_name: string | null;
 	avatar_url: string | null;
-	provider: string;
+	social_url?: string | null;
+	provider?: string;
+}
+
+/** Payload sent to /api/auth/register and /api/auth/login. */
+export interface AuthPayload {
+	username: string;
+	password: string;
+	form_opened_at: number;
+	website: string;
+	challenge_proof: string;
+	challenge_nonce: string;
 }
 
 export interface ManifestoDoc {
