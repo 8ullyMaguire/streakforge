@@ -1,0 +1,104 @@
+use axum::extract::State;
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+use axum::http::Method;
+use axum::response::IntoResponse;
+use axum::routing::{get, patch, post};
+use axum::Router;
+use streakforge_api::auth;
+use streakforge_api::config::Config;
+use streakforge_api::db;
+use streakforge_api::AppState;
+use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
+use tower_sessions::{Expiry, SessionManagerLayer};
+use tower_sessions_sqlx_store::PostgresStore;
+
+// SPA fallback: serve index.html for any non-API route (client-side routing).
+async fn spa_fallback(State(state): State<AppState>) -> impl IntoResponse {
+    let path = std::path::Path::new(&state.cfg.web_build_dir).join("index.html");
+    match tokio::fs::read(&path).await {
+        Ok(body) => (
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            body,
+        )
+            .into_response(),
+        Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "streakforge=debug,tower_http=debug,sqlx=warn".into()),
+        )
+        .init();
+
+    let cfg = Config::from_env();
+    let pool = db::connect(&cfg.database_url).await?;
+    db::run_migrations(&pool).await?;
+    tracing::info!("migrations applied");
+
+    let session_store = PostgresStore::new(pool.clone());
+    session_store.migrate().await?;
+    let key = tower_sessions::cookie::Key::generate();
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_expiry(Expiry::OnSessionEnd)
+        .with_signed(key)
+        .with_secure(cfg.secure_cookies);
+
+    let state = AppState {
+        pool,
+        cfg: cfg.clone(),
+        x_oauth: auth::XOAuth::new(&cfg),
+    };
+
+    let cors = CorsLayer::new()
+        .allow_origin(cfg.public_url.parse::<axum::http::HeaderValue>()?)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([CONTENT_TYPE, AUTHORIZATION])
+        .allow_credentials(true);
+
+    let api_router = Router::new()
+        .route("/auth/me", get(auth::me))
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/x", get(auth::login_start))
+        .route("/auth/x/callback", get(auth::login_callback))
+        .route("/auth/dev-login", post(auth::dev_login))
+        .route("/logs", post(streakforge_api::api::log_habit))
+        .route("/stats", get(streakforge_api::api::get_stats))
+        .route("/leaderboard/{period}", get(streakforge_api::api::get_leaderboard))
+        .route("/user-of-the-day", get(streakforge_api::api::get_user_of_the_day))
+        .route("/total", get(streakforge_api::api::get_total))
+        .route("/feed", get(streakforge_api::api::get_feed))
+        .route("/profile/{username}", get(streakforge_api::api::get_profile))
+        .route("/profile", patch(streakforge_api::api::update_profile));
+
+    let app = Router::new()
+        .nest("/api", api_router)
+        .nest_service(
+            "/_app",
+            ServeDir::new(format!("{}/_app", cfg.web_build_dir)),
+        )
+        .fallback(spa_fallback)
+        .with_state(state)
+        .layer(session_layer)
+        .layer(cors)
+        .layer(TraceLayer::new_for_http());
+
+    let addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8787".into());
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("streakforge listening on http://{addr}");
+    axum::serve(listener, app).await?;
+    Ok(())
+}

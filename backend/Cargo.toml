@@ -1,0 +1,50 @@
+[package]
+name = "streakforge-api"
+version = "0.1.0"
+edition = "2021"
+description = "StreakForge — habit & streak tracker with community leaderboards (Rust + Svelte)"
+license = "MIT"
+
+[dependencies]
+# web framework
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "compression-gzip"] }
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+time = { version = "0.3", features = ["serde", "serde-well-known", "macros", "formatting", "parsing"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "time", "chrono", "migrate"] }
+deadpool-redis = "0.19"
+redis = { version = "0.27", features = ["tokio-comp"] }
+
+# auth
+oauth2 = "4"
+tower-sessions = { version = "0.14", features = ["memory-store", "private", "signed", "axum-core"] }
+tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
+rand = "0.8"
+sha2 = "0.10"
+
+# misc
+thiserror = "2"
+dotenvy = "0.15"
+futures = "0.3"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+mime = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
