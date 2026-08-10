@@ -1,6 +1,8 @@
 // Library facade so integration tests can reference the crate's modules.
 pub mod api;
 pub mod auth;
+#[cfg(test)]
+pub mod auth_tests;
 pub mod config;
 pub mod db;
 pub mod error;
@@ -15,5 +17,4 @@ use sqlx::PgPool;
 pub struct AppState {
     pub pool: PgPool,
     pub cfg: Config,
-    pub x_oauth: auth::XOAuth,
 }

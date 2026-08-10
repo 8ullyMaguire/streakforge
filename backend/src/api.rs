@@ -8,7 +8,6 @@ use crate::error::{ApiError, ApiResult};
 use crate::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::Response;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -113,6 +112,8 @@ pub struct ProfileResponse {
     pub username: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub social_url: Option<String>,
     pub created_at: String,
     pub streak: i64,
     pub longest_streak: i64,
@@ -126,6 +127,7 @@ pub struct UpdateProfileRequest {
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
+    pub social_url: Option<String>,
 }
 
 // ---- Rate limiting ----
@@ -441,21 +443,20 @@ pub async fn get_profile(
     State(state): State<AppState>,
     Path(username): Path<String>,
 ) -> ApiResult<Json<ProfileResponse>> {
-    let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, OffsetDateTime)> =
+    let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime)> =
         sqlx::query_as(
-            "select id, username, display_name, avatar_url, created_at from profiles where username = $1",
+            "select id, username, display_name, avatar_url, social_url, created_at from profiles where username = $1",
         )
         .bind(&username)
         .fetch_optional(&state.pool)
         .await?;
-    let Some((id, uname, dname, av, created)) = row else {
+    let Some((id, uname, dname, av, social_url, created)) = row else {
         return Err(ApiError::not_found("Profile not found"));
     };
     let (streak, longest): (i64, i64) = sqlx::query_as("select current_streak::bigint, longest_streak::bigint from user_streak($1)")
         .bind(id)
         .fetch_one(&state.pool)
         .await?;
-    let today_start = OffsetDateTime::now_utc().date().midnight().assume_utc();
     let week_start = week_start_utc(OffsetDateTime::now_utc());
     let (today_count, week_count, alltime_count): (i64, i64, i64) = sqlx::query_as(
         "select
@@ -473,6 +474,7 @@ pub async fn get_profile(
         username: uname,
         display_name: dname,
         avatar_url: av,
+        social_url,
         created_at: created.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         streak,
         longest_streak: longest,
@@ -492,6 +494,7 @@ pub async fn update_profile(
     let mut username = user.username.clone();
     let mut display_name = user.display_name.clone();
     let mut avatar_url = user.avatar_url.clone();
+    let mut social_url = user.social_url.clone();
 
     if let Some(u) = body.username {
         let u = u.trim().to_string();
@@ -516,31 +519,42 @@ pub async fn update_profile(
         }
         avatar_url = if a.is_empty() { None } else { Some(a) };
     }
+    if let Some(s) = body.social_url {
+        let s = s.trim().to_string();
+        if !s.is_empty() && !(s.starts_with("https://") || s.starts_with("http://")) {
+            return Err(ApiError::bad_request("Social URL must start with http(s)://"));
+        }
+        if s.chars().count() > 500 {
+            return Err(ApiError::bad_request("Social URL max 500 chars"));
+        }
+        social_url = if s.is_empty() { None } else { Some(s) };
+    }
 
-    let updated = sqlx::query_as::<_, (uuid::Uuid, String, Option<String>, Option<String>, OffsetDateTime)>(
-        "update profiles set username = $1, display_name = $2, avatar_url = $3, updated_at = now()
-         where id = $4
-         returning id, username, display_name, avatar_url, created_at",
+    let updated = sqlx::query_as::<_, (uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime)>(
+        "update profiles set username = $1, display_name = $2, avatar_url = $3, social_url = $4, updated_at = now()
+         where id = $5
+         returning id, username, display_name, avatar_url, social_url, created_at",
     )
     .bind(&username)
     .bind(&display_name)
     .bind(&avatar_url)
+    .bind(&social_url)
     .bind(user.id)
     .fetch_optional(&state.pool)
     .await?;
 
-    let Some((id, uname, dname, av, created)) = updated else {
+    let Some((id, uname, dname, av, social_url, created)) = updated else {
         return Err(ApiError::not_found("Profile not found"));
     };
 
     // refresh session user
-    let mut session = session;
     let new_user = SessionUser {
         id,
         username: uname.clone(),
         display_name: dname.clone(),
         avatar_url: av.clone(),
         provider: user.provider,
+        social_url: social_url.clone(),
     };
     session
         .insert(crate::auth::SESSION_USER_KEY, &new_user)
@@ -568,6 +582,7 @@ pub async fn update_profile(
         username: uname,
         display_name: dname,
         avatar_url: av,
+        social_url,
         created_at: created.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         streak,
         longest_streak: longest,

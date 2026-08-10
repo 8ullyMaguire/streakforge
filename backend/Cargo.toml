@@ -26,9 +26,9 @@ deadpool-redis = "0.19"
 redis = { version = "0.27", features = ["tokio-comp"] }
 
 # auth
-oauth2 = "4"
 tower-sessions = { version = "0.14", features = ["memory-store", "private", "signed", "axum-core"] }
 tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
+argon2 = "0.5.3"
 rand = "0.8"
 sha2 = "0.10"
 

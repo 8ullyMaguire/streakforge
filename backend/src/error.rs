@@ -63,13 +63,6 @@ impl From<serde_json::Error> for ApiError {
     }
 }
 
-impl From<oauth2::url::ParseError> for ApiError {
-    fn from(e: oauth2::url::ParseError) -> Self {
-        tracing::error!("url error: {e}");
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
-    }
-}
-
 impl From<tower_sessions::session::Error> for ApiError {
     fn from(e: tower_sessions::session::Error) -> Self {
         tracing::error!("session error: {e}");

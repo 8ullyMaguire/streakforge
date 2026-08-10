@@ -54,7 +54,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         pool,
         cfg: cfg.clone(),
-        x_oauth: auth::XOAuth::new(&cfg),
     };
 
     let cors = CorsLayer::new()
@@ -72,9 +71,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_router = Router::new()
         .route("/auth/me", get(auth::me))
         .route("/auth/logout", post(auth::logout))
-        .route("/auth/x", get(auth::login_start))
-        .route("/auth/x/callback", get(auth::login_callback))
-        .route("/auth/dev-login", post(auth::dev_login))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/nonce", get(auth::nonce))
         .route("/logs", post(streakforge_api::api::log_habit))
         .route("/stats", get(streakforge_api::api::get_stats))
         .route("/drill", get(streakforge_api::api::get_drill))

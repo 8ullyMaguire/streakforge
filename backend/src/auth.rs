@@ -1,25 +1,40 @@
-// Auth — session-based with X OAuth (PKCE) + dev login.
-// tower-sessions Session extractor auto-creates sessions, so OAuth
-// callback/dev-login just insert the user into the session.
+// Auth — session-based with local username/password registration + login.
+// Bot-dissuasion for the public register/login forms:
+//   - honeypot field (hidden in the form; bots that autofill it get rejected)
+//   - form timing (the form must have been opened 3s..10min before submit)
+//   - JS challenge: client fetches a nonce from GET /api/auth/nonce, computes
+//     proof = sha256(nonce + username + password) truncated to 16 hex chars
+//     (16 hex chars = 64 bits of work the client must actually compute), and
+//     the server recomputes it. Proof-of-work style — a bot that skips the
+//     challenge cannot produce a valid proof without running the JS.
+// Passwords are stored as Argon2id PHC strings. No SMTP, no email.
 
-use crate::config::Config;
 use crate::error::{ApiError, ApiResult};
 use crate::AppState;
-use axum::extract::{Query, State};
-use axum::response::{IntoResponse, Redirect, Response};
+use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::Argon2;
+use axum::extract::State;
+use axum::response::IntoResponse;
 use axum::Json;
-use oauth2::basic::BasicClient;
-use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
-};
-use oauth2::reqwest::async_http_client;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tower_sessions::Session;
 use uuid::Uuid;
 
 pub const SESSION_USER_KEY: &str = "user";
+
+/// Minimum wall-clock time a human needs to open a form and submit it.
+pub const FORM_MIN_OPEN_MS: u128 = 3_000;
+/// Reject forms that claim to have been open for longer than this.
+pub const FORM_MAX_OPEN_MS: u128 = 600_000; // 10 minutes
+
+/// Argon2id parameters (OWASP-recommended baseline).
+const ARGON2_M_COST: u32 = 19_456; // ~19 MiB
+const ARGON2_T_COST: u32 = 2;
+const ARGON2_P_COST: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionUser {
@@ -30,104 +45,154 @@ pub struct SessionUser {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
     pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub social_url: Option<String>,
 }
 
-// ---- X OAuth ----
+// ---- Password hashing (Argon2id) ----
 
-#[derive(Debug, Clone)]
-pub struct XOAuth {
-    client: Option<BasicClient>,
-}
-
-impl XOAuth {
-    pub fn new(cfg: &Config) -> Self {
-        let client = match (&cfg.x_client_id, &cfg.x_client_secret) {
-            (Some(id), Some(secret)) => {
-                let auth_url = AuthUrl::new("https://twitter.com/i/oauth2/authorize".into())
-                    .expect("valid auth url");
-                let token_url = TokenUrl::new("https://api.twitter.com/2/oauth2/token".into())
-                    .expect("valid token url");
-                let _ = (&auth_url, &token_url); // URLs built inline in BasicClient::new
-                Some(
-                    BasicClient::new(
-                        ClientId::new(id.clone()),
-                        Some(ClientSecret::new(secret.clone())),
-                        AuthUrl::new("https://twitter.com/i/oauth2/authorize".into())
-                            .expect("valid auth url"),
-                        Some(
-                            TokenUrl::new("https://api.twitter.com/2/oauth2/token".into())
-                                .expect("valid token url"),
-                        ),
-                    )
-                    .set_redirect_uri(
-                        RedirectUrl::new(format!("{}/api/auth/x/callback", cfg.public_url))
-                            .expect("valid redirect url"),
-                    ),
-                )
-            }
-            _ => None,
-        };
-        Self { client }
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.client.is_some()
-    }
-
-    pub fn start(&self) -> ApiResult<(String, String, String)> {
-        let client = self
-            .client
-            .as_ref()
-            .ok_or_else(|| ApiError::bad_request("X login not configured"))?;
-        let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
-        let (auth_url, csrf_token) = client
-            .authorize_url(CsrfToken::new_random)
-            .add_scope(Scope::new("users.read".into()))
-            .set_pkce_challenge(pkce_challenge)
-            .url();
-        Ok((
-            auth_url.to_string(),
-            csrf_token.secret().clone(),
-            pkce_verifier.secret().clone(),
-        ))
-    }
-
-    pub async fn exchange(&self, code: &str, verifier: &str) -> ApiResult<String> {
-        let client = self
-            .client
-            .as_ref()
-            .ok_or_else(|| ApiError::bad_request("X login not configured"))?;
-        let token = client
-            .exchange_code(AuthorizationCode::new(code.to_string()))
-            .set_pkce_verifier(PkceCodeVerifier::new(verifier.to_string()))
-            .request_async(async_http_client)
-            .await
+pub fn hash_password(password: &str) -> ApiResult<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon2::Params::new(ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, None)
             .map_err(|e| {
-                tracing::error!("oauth exchange failed: {e}");
-                ApiError::bad_request("X OAuth exchange failed")
-            })?;
-        Ok(token.access_token().secret().clone())
-    }
+                tracing::error!("argon2 params: {e}");
+                ApiError::new(
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Password hashing unavailable",
+                )
+            })?,
+    );
+    argon2
+        .hash_password(password.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| {
+            tracing::error!("argon2 hash failed: {e}");
+            ApiError::new(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Password hashing failed",
+            )
+        })
 }
 
-pub fn reqwest_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent("streakforge/0.1")
-        .build()
-        .expect("reqwest client")
+/// Constant-time verification against a stored PHC string. Returns false for
+/// any malformed hash rather than erroring, so login can't distinguish
+/// "unknown user" from "bad hash".
+pub fn verify_password(password: &str, phc: &str) -> bool {
+    let Ok(parsed) = PasswordHash::new(phc) else {
+        return false;
+    };
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
 }
+
+// ---- JS challenge (proof-of-work) ----
+
+/// Server-side half of the challenge: recompute what the client must have
+/// computed. proof must equal sha256(nonce || username || password)[0..16]
+/// (first 16 hex chars = 64 bits).
+pub fn compute_challenge_proof(nonce: &str, username: &str, password: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(nonce.as_bytes());
+    hasher.update(username.as_bytes());
+    hasher.update(password.as_bytes());
+    let digest = hasher.finalize();
+    digest[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
+}
+
+pub fn challenge_proof_valid(proof: &str, nonce: &str, username: &str, password: &str) -> bool {
+    if proof.len() != 16 || !proof.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    // constant-time comparison of the hex string
+    let expected = compute_challenge_proof(nonce, username, password);
+    let a = proof.as_bytes();
+    let b = expected.as_bytes();
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+pub fn fresh_nonce() -> String {
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// ---- Bot-dissuasion validation ----
 
 #[derive(Debug, Deserialize)]
-struct XUserResponse {
-    data: XUserData,
+pub struct AuthForm {
+    pub username: String,
+    pub password: String,
+    /// ms epoch when the form was opened (client clock)
+    pub form_opened_at: Option<i64>,
+    /// honeypot field — must be empty (bots fill every input)
+    #[serde(default)]
+    pub website: String,
+    pub challenge_proof: Option<String>,
+    pub challenge_nonce: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct XUserData {
-    pub id: String,
-    pub username: String,
-    #[serde(default)]
-    pub name: String,
+/// Common validation for register + login forms.
+/// Returns the trimmed username on success.
+fn validate_auth_form(body: &AuthForm) -> ApiResult<String> {
+    let username = body.username.trim().to_string();
+
+    // Honeypot: bots fill hidden fields.
+    if !body.website.trim().is_empty() {
+        return Err(ApiError::bad_request("Invalid form submission"));
+    }
+
+    // Form timing: must have been open between 3s and 10min.
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| {
+            tracing::error!("clock error: {e}");
+            ApiError::new(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Server clock error",
+            )
+        })?
+        .as_millis();
+    let opened = body.form_opened_at.unwrap_or(0) as u128;
+    let open_ms = now_ms.saturating_sub(opened);
+    if open_ms < FORM_MIN_OPEN_MS || open_ms > FORM_MAX_OPEN_MS {
+        return Err(ApiError::bad_request("Invalid form submission"));
+    }
+
+    // JS challenge proof-of-work.
+    let proof = body
+        .challenge_proof
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("Invalid form submission"))?;
+    let nonce = body
+        .challenge_nonce
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("Invalid form submission"))?;
+    if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(ApiError::bad_request("Invalid form submission"));
+    }
+    if !challenge_proof_valid(proof, nonce, &username, &body.password) {
+        return Err(ApiError::bad_request("Invalid form submission"));
+    }
+
+    Ok(username)
+}
+
+fn valid_username(u: &str) -> bool {
+    !u.is_empty()
+        && u.chars().count() >= 2
+        && u.chars().count() <= 30
+        && u.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 // ---- Handlers ----
@@ -143,156 +208,146 @@ pub async fn me(session: Session) -> ApiResult<Json<SessionUser>> {
     }
 }
 
-pub async fn logout(session: Session) -> ApiResult<Response> {
+pub async fn logout(session: Session) -> ApiResult<axum::response::Response> {
     session.flush().await.map_err(ApiError::from)?;
-    Ok(Redirect::to("/").into_response())
+    Ok(axum::response::Redirect::to("/").into_response())
 }
 
-pub async fn login_start(
+/// GET /api/auth/nonce — fresh random hex nonce for the JS challenge.
+pub async fn nonce() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "nonce": fresh_nonce() }))
+}
+
+/// POST /api/auth/register — create a local profile and log in.
+pub async fn register(
     State(state): State<AppState>,
     session: Session,
-) -> ApiResult<Response> {
-    let (url, csrf, verifier) = state.x_oauth.start()?;
-    session.insert("oauth_csrf", &csrf).await.map_err(ApiError::from)?;
-    session
-        .insert("oauth_verifier", &verifier)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Redirect::to(&url).into_response())
-}
+    Json(body): Json<AuthForm>,
+) -> ApiResult<(axum::http::StatusCode, Json<SessionUser>)> {
+    let username = validate_auth_form(&body)?;
 
-#[derive(Debug, Deserialize)]
-pub struct OAuthCallbackParams {
-    pub code: Option<String>,
-    pub state: Option<String>,
-    pub error: Option<String>,
-}
-
-pub async fn login_callback(
-    State(state): State<AppState>,
-    session: Session,
-    Query(params): Query<OAuthCallbackParams>,
-) -> ApiResult<Response> {
-    if let Some(err) = &params.error {
-        tracing::warn!("oauth error: {err}");
-        return Err(ApiError::bad_request(format!("X login failed: {err}")));
+    if !valid_username(&username) {
+        return Err(ApiError::bad_request(
+            "Username must be 2–30 chars, letters/digits/underscore only",
+        ));
     }
-    let expected_csrf: Option<String> = session.get("oauth_csrf").await.map_err(ApiError::from)?;
-    let verifier: Option<String> = session
-        .get("oauth_verifier")
-        .await
-        .map_err(ApiError::from)?;
-    let state_param = params.state.ok_or_else(|| ApiError::bad_request("Missing state"))?;
-    if expected_csrf.as_deref() != Some(state_param.as_str()) {
-        return Err(ApiError::bad_request("OAuth state mismatch"));
+    if body.password.chars().count() < 8 {
+        return Err(ApiError::bad_request(
+            "Password must be at least 8 characters",
+        ));
     }
-    let code = params.code.ok_or_else(|| ApiError::bad_request("Missing code"))?;
-    let verifier = verifier.ok_or_else(|| ApiError::bad_request("Missing verifier"))?;
-    let access_token = state.x_oauth.exchange(&code, &verifier).await?;
-    let x_user = fetch_x_user(&access_token).await?;
-    let user = upsert_profile(&state.pool, &x_user, "x").await?;
-    session.insert(SESSION_USER_KEY, &user).await.map_err(ApiError::from)?;
-    session.remove::<String>("oauth_csrf").await.map_err(ApiError::from)?;
-    session.remove::<String>("oauth_verifier").await.map_err(ApiError::from)?;
-    Ok(Redirect::to("/dashboard").into_response())
-}
-
-pub async fn fetch_x_user(access_token: &str) -> ApiResult<XUserData> {
-    let resp = reqwest_client()
-        .get("https://api.twitter.com/2/users/me")
-        .bearer_auth(access_token)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!("x user fetch failed: {e}");
-            ApiError::bad_request("Failed to fetch X profile")
-        })?;
-    if !resp.status().is_success() {
-        tracing::error!("x user fetch status: {}", resp.status());
-        return Err(ApiError::bad_request("Failed to fetch X profile"));
+    if body.password.chars().count() > 1024 {
+        return Err(ApiError::bad_request("Password too long"));
     }
-    let body: XUserResponse = resp.json().await.map_err(|e| {
-        tracing::error!("x user parse failed: {e}");
-        ApiError::bad_request("Failed to parse X profile")
-    })?;
-    Ok(body.data)
-}
 
-pub async fn upsert_profile(pool: &PgPool, x: &XUserData, provider: &str) -> ApiResult<SessionUser> {
-    let base = sanitize_username(&x.username);
-    for i in 0..100u32 {
-        let candidate = if i == 0 {
-            base.clone()
-        } else {
-            format!("{base}_{i}")
-        };
-        let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String)>(
-            r#"
-            insert into profiles (id, username, display_name, avatar_url, provider, provider_id)
-            values (gen_random_uuid(), $1, $2, NULL, $3, $4)
-            on conflict (provider, provider_id) do update set provider_id = excluded.provider_id
-            returning id, username, display_name, avatar_url, provider
-            "#,
-        )
-        .bind(&candidate)
-        .bind(if x.name.is_empty() { None } else { Some(&x.name) })
-        .bind(provider)
-        .bind(&x.id)
-        .fetch_optional(pool)
-        .await?;
-        if let Some((id, uname, dname, av, prov)) = row {
-            return Ok(SessionUser {
-                id,
-                username: uname,
-                display_name: dname,
-                avatar_url: av,
-                provider: prov,
-            });
-        }
+    let password_hash = hash_password(&body.password)?;
+
+    // Explicit conflict check first so we can return a clean 409
+    // (the unique constraint would also catch it via sqlx::Error mapping).
+    let taken: Option<String> =
+        sqlx::query_scalar("select username from profiles where username = $1")
+            .bind(&username)
+            .fetch_optional(&state.pool)
+            .await?;
+    if taken.is_some() {
+        return Err(ApiError::conflict("That username is already taken"));
     }
-    Err(ApiError::conflict("Could not create profile"))
-}
 
-pub fn sanitize_username(raw: &str) -> String {
-    let cleaned: String = raw
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
-        .collect();
-    let trimmed = cleaned.trim_matches('_').to_string();
-    let base = if trimmed.len() < 2 {
-        format!("user{trimmed}")
-    } else {
-        trimmed
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String, Option<String>)>(
+        r#"
+        insert into profiles (username, display_name, avatar_url, provider, provider_id, password_hash)
+        values ($1, NULL, NULL, 'local', NULL, $2)
+        returning id, username, display_name, avatar_url, provider, social_url
+        "#,
+    )
+    .bind(&username)
+    .bind(&password_hash)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let Some((id, uname, dname, av, provider, social_url)) = row else {
+        // Race: someone else took the username between check and insert.
+        return Err(ApiError::conflict("That username is already taken"));
     };
-    base.chars().take(30).collect()
+
+    let user = SessionUser {
+        id,
+        username: uname,
+        display_name: dname,
+        avatar_url: av,
+        provider,
+        social_url,
+    };
+    session.insert(SESSION_USER_KEY, &user).await.map_err(ApiError::from)?;
+
+    Ok((axum::http::StatusCode::CREATED, Json(user)))
 }
 
-// ---- Dev login (local testing only) ----
-
-#[derive(Debug, Deserialize)]
-pub struct DevLoginParams {
-    pub username: Option<String>,
-}
-
-pub async fn dev_login(
+/// POST /api/auth/login — verify credentials and start a session.
+/// Any failure returns a generic 401 so we don't leak which field was wrong.
+pub async fn login(
     State(state): State<AppState>,
     session: Session,
-    Query(params): Query<DevLoginParams>,
-) -> ApiResult<Response> {
-    if !state.cfg.allow_dev_login {
-        return Err(ApiError::unauthorized("Dev login disabled"));
-    }
-    let username = params
-        .username
-        .clone()
-        .unwrap_or_else(|| "dev_forger".into());
-    let username = sanitize_username(&username);
-    let x = XUserData {
-        id: format!("dev-{username}"),
-        username: username.clone(),
-        name: "Dev Forger".into(),
+    Json(body): Json<AuthForm>,
+) -> ApiResult<Json<SessionUser>> {
+    let username = validate_auth_form(&body)?;
+
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String, Option<String>, Option<String>)>(
+        "select id, username, display_name, avatar_url, provider, social_url, password_hash
+         from profiles where username = $1",
+    )
+    .bind(&username)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let Some((id, uname, dname, av, provider, social_url, phc)) = row else {
+        // Unknown user: burn a tiny bit of CPU so the response time doesn't
+        // reveal whether the username exists.
+        let _ = hash_password(&body.password);
+        return Err(ApiError::unauthorized("Invalid username or password"));
     };
-    let user = upsert_profile(&state.pool, &x, "dev").await?;
+
+    // Legacy X/dev rows have no password hash — they can't log in this way.
+    let Some(phc) = phc else {
+        return Err(ApiError::unauthorized("Invalid username or password"));
+    };
+
+    if !verify_password(&body.password, &phc) {
+        return Err(ApiError::unauthorized("Invalid username or password"));
+    }
+
+    let user = SessionUser {
+        id,
+        username: uname,
+        display_name: dname,
+        avatar_url: av,
+        provider,
+        social_url,
+    };
     session.insert(SESSION_USER_KEY, &user).await.map_err(ApiError::from)?;
-    Ok(Redirect::to("/dashboard").into_response())
+
+    Ok(Json(user))
+}
+
+// ---- Profile helpers (registration + session refresh) ----
+
+pub async fn fetch_profile(pool: &PgPool, id: Uuid) -> ApiResult<SessionUser> {
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String, Option<String>)>(
+        "select id, username, display_name, avatar_url, provider, social_url
+         from profiles where id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((id, uname, dname, av, provider, social_url)) = row else {
+        return Err(ApiError::not_found("Profile not found"));
+    };
+    Ok(SessionUser {
+        id,
+        username: uname,
+        display_name: dname,
+        avatar_url: av,
+        provider,
+        social_url,
+    })
 }
