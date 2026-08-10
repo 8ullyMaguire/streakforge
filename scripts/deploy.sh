@@ -15,8 +15,8 @@ WWW_DIR="/var/www/streakforge"
 echo "==> 1/6 Building release binary (local)"
 (cd "$ROOT/backend" && cargo build --release)
 
-echo "==> 2/6 Building frontend (no dev login)"
-(cd "$ROOT/web" && VITE_ALLOW_DEV_LOGIN=0 npm run build >/dev/null)
+echo "==> 2/6 Building frontend (production)"
+(cd "$ROOT/web" && npm run build >/dev/null)
 
 echo "==> 3/6 Syncing to $HOST"
 ssh "$HOST" "mkdir -p $DEPLOY_DIR && sudo mkdir -p $WWW_DIR && sudo chown -R alvaro:alvaro $WWW_DIR"
@@ -28,9 +28,8 @@ rsync -az --delete "$ROOT/web/build/" "$HOST:$WWW_DIR/"
 echo "==> 4/6 Writing .env"
 ssh "$HOST" "cat > $DEPLOY_DIR/.env" <<'ENV'
 DATABASE_URL=postgres://streakforge:streakforge_prod@127.0.0.1:5432/streakforge
-SESSION_SECRET=CHANGE_ME_to_a_long_random_string_for_production_0123456789abcdef
+SESSION_SECRET=c51fb52a3b2cbb1a5850d7862eb2b44954a59f0c93bcde91ec0100008c3c668d
 PUBLIC_URL=http://127.0.0.1:8001
-ALLOW_DEV_LOGIN=0
 SECURE_COOKIES=0
 WEB_BUILD_DIR=/var/www/streakforge
 MANIFESTOS_DIR=/personal/documents/code/streakforge/manifestos

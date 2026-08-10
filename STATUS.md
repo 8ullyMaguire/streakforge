@@ -11,7 +11,10 @@ Last updated: 2026-08-10
 - [x] `user_of_the_day()` — count + earliest-log tiebreak
 - [x] `activity_feed()` — cursor pagination
 - [x] `profile_stats()` — today / week / alltime / streaks
-- [x] Auth: X OAuth 2.0 (PKCE) + dev-login + Postgres-backed sessions
+- [x] Auth: local username/password (Argon2id) + session cookies; bot-dissuasion
+      (honeypot, form timing, JS proof-of-work challenge); NO X OAuth, NO SMTP,
+      NO dev-login in production
+- [x] One social URL per profile (editable in settings, shown on public profile)
 - [x] Rate limits: 1/hr + 5/day per kind (habit vs affirmation), server-enforced
 - [x] Affirmation drill: `/api/drill` stats + `kind` on `/api/logs`; drill reps
       kept out of leaderboards/feed/total (separate community surface)
@@ -27,7 +30,8 @@ Last updated: 2026-08-10
 - [x] wlw-style dark theme (near-black, red/gold, Inter + Roboto Mono)
 - [x] Landing: hero, big green/black tabular counter, marquee, UOTD card,
       top-25 daily board, recent activity
-- [x] Login: X OAuth button + dev-login (local)
+- [x] Login: username/password form (SIGN IN / REGISTER tabs), honeypot +
+      timing + JS challenge bot-dissuasion, no external accounts
 - [x] Dashboard: stat cards, Log button (rate-limit aware), 30-day heatmap,
       recent logs
 - [x] Leaderboard: Daily / Weekly / All-time tabs + UOTD
@@ -48,8 +52,8 @@ Last updated: 2026-08-10
   profile CRUD, drill separate budgets, manifesto + traversal 400).
 - Browser-tested end-to-end: login → dashboard → log → leaderboard tabs → feed →
   profile → settings update → drill (counter/card/rate-limit hint) → manifesto.
-- Backend: `cargo test --test integration` — 6/6 pass.
-- Frontend: `vitest run` — 24/24 pass; `svelte-check` — 0 errors.
+- Backend: `cargo test --test integration` — 13/13 pass; `cargo test --lib` — 8/8 pass.
+- Frontend: `vitest run` — 33/33 pass; `svelte-check` — 0 errors.
 - Deployed: thinkcentre port 8001, systemd active, all routes 200, auth enforced,
   dev-login disabled; pushed private to opencommit.eu/MagicZhang/streakforge.
 
@@ -61,10 +65,10 @@ Last updated: 2026-08-10
 
 ## Known issues / notes
 
-- Dev-login button only appears when built with `VITE_ALLOW_DEV_LOGIN=1`.
-- X OAuth requires real `X_CLIENT_ID` / `X_CLIENT_SECRET`; dev-login is the
-  local path.
-- Session cookie secret should be rotated for production (`SESSION_SECRET`).
+- No email/SMTP by design — accounts are username/password only.
+- Legacy 'x'/'dev' provider rows (pre-migration) have no password hash and
+  cannot log in; they are harmless orphans.
+- Session cookie secret must be rotated per environment (`SESSION_SECRET`).
 
 ## Not in scope (v1)
 

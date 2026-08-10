@@ -52,7 +52,12 @@ Plus `STATUS.md` for the living dev-status checklist.
 - **Manifesto** — a `/manifesto` page serving curated doctrine/training texts
   (commandments, guides, socials) from the `manifestos/` directory, rendered
   markdown in the wlw-style theme.
-- **Auth** — X (Twitter) OAuth 2.0 with PKCE, plus a local dev-login for testing.
+- **Auth** — local username/password (Argon2id) with session cookies.
+  Bot-dissuasion on the public forms: hidden honeypot field, form timing
+  (3s–10min window), and a JS proof-of-work challenge (sha256 over a
+  server nonce). No X OAuth, no SMTP, no dev-login in production.
+- **Social URL** — each profile can store one external link (editable in
+  Settings, shown on the public profile when you click a user's name).
 - **wlw-style theme** — near-black, red/gold accents, Inter + Roboto Mono,
   tabular green counter digits, scrolling marquee, mobile-first.
 
@@ -64,7 +69,7 @@ Plus `STATUS.md` for the living dev-status checklist.
 | Frontend  | SvelteKit (Svelte 5, SPA adapter-static), TypeScript |
 | Styling   | Plain CSS with CSS variables (no framework)       |
 | Database  | PostgreSQL 16, sqlx (runtime queries + migrations)|
-| Auth      | X OAuth 2.0 PKCE + dev login                      |
+| Auth      | Local username/password (Argon2id) + sessions, bot-dissuasion |
 | Tests     | Rust `#[sqlx::test]` integration + Vitest          |
 
 ## Repository Layout
@@ -116,8 +121,7 @@ Migrations run automatically on backend startup.
 ```bash
 cd backend
 cargo build
-# optional: set X_CLIENT_ID / X_CLIENT_SECRET for real X login
-ALLOW_DEV_LOGIN=1 WEB_BUILD_DIR=/abs/path/to/streakforge/web/build cargo run
+DATABASE_URL=postgres://streakforge:***@127.0.0.1:5432/streakforge WEB_BUILD_DIR=/abs/path/to/streakforge/web/build cargo run
 ```
 
 The server listens on `http://127.0.0.1:8787` by default.
@@ -127,7 +131,7 @@ The server listens on `http://127.0.0.1:8787` by default.
 ```bash
 cd web
 npm install
-VITE_ALLOW_DEV_LOGIN=1 npm run build   # include the dev-login button
+npm run build   # production build — no dev-login, no X OAuth
 ```
 
 The SPA is served by the Rust backend at `/` (adapter-static build).
@@ -136,12 +140,9 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 
 | Var               | Default                          | Purpose                              |
 |-------------------|----------------------------------|--------------------------------------|
-| `DATABASE_URL`    | postgres://streakforge:...@127.0.0.1:5432/streakforge | Postgres DSN |
+| `DATABASE_URL`    | postgres://streakforge:***@127.0.0.1:5432/streakforge | Postgres DSN |
 | `SESSION_SECRET`  | dev-only-insecure-...            | Cookie signing key (set in prod!)    |
-| `X_CLIENT_ID`     | —                                | X OAuth client ID                    |
-| `X_CLIENT_SECRET` | —                                | X OAuth client secret                |
-| `PUBLIC_URL`      | http://127.0.0.1:8787            | Public base URL (OAuth redirect)     |
-| `ALLOW_DEV_LOGIN` | `1`                              | Enable `/api/auth/dev-login`         |
+| `PUBLIC_URL`      | http://127.0.0.1:8787            | Public base URL                      |
 | `SECURE_COOKIES`  | `0`                              | Set to `1` behind HTTPS              |
 | `WEB_BUILD_DIR`   | `./web/build`                    | SPA static dir served by Rust        |
 | `MANIFESTOS_DIR`  | `./manifestos`                   | Directory of manifesto markdown docs |
@@ -151,11 +152,11 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 
 | Method | Path                      | Auth | Description                          |
 |--------|---------------------------|------|--------------------------------------|
+| GET    | `/api/auth/nonce`         | —    | Fresh nonce for the JS challenge     |
+| POST   | `/api/auth/register`      | —    | Create local account (bot-dissuaded) |
+| POST   | `/api/auth/login`         | —    | Sign in (bot-dissuaded)              |
 | GET    | `/api/auth/me`            | ✓    | Current session user                 |
 | POST   | `/api/auth/logout`        | ✓    | End session                          |
-| GET    | `/api/auth/x`             | —    | Start X OAuth (redirects to X)       |
-| GET    | `/api/auth/x/callback`    | —    | OAuth callback                       |
-| POST   | `/api/auth/dev-login`     | —    | Dev login (if enabled)               |
 | POST   | `/api/logs`               | ✓    | Log a completion (rate-limited, `kind` = habit|affirmation) |
 | GET    | `/api/stats`              | ✓    | Personal habit stats + recent logs         |
 | GET    | `/api/drill`              | ✓    | Affirmation drill stats (separate budget)  |
@@ -163,8 +164,8 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | GET    | `/api/user-of-the-day`    | —    | Today's top user                     |
 | GET    | `/api/total`              | —    | Total completions (hero counter)     |
 | GET    | `/api/feed`               | —    | Public feed (cursor + limit)         |
-| GET    | `/api/profile/{username}` | —    | Public profile stats                 |
-| PATCH  | `/api/profile`            | ✓    | Update username/display/avatar       |
+| GET    | `/api/profile/{username}` | —    | Public profile stats (+ social_url)  |
+| PATCH  | `/api/profile`            | ✓    | Update username/display/avatar/social_url |
 | GET    | `/api/manifesto`          | —    | List manifesto docs                  |
 | GET    | `/api/manifesto/{id}`     | —    | Fetch a manifesto document (markdown)|
 
@@ -215,7 +216,7 @@ npm test   # vitest
   route → `http://192.168.1.13:8001`).
 - Deploy with `./scripts/deploy.sh thinkcentre` (builds release, syncs, installs unit).
 - After deploy, set a random `SESSION_SECRET` (see OPERATIONS.md §3.1).
-- Build frontend with `VITE_ALLOW_DEV_LOGIN=1` for local testing; omit for production.
+- Build the frontend with a plain `npm run build` (no dev-login variant exists).
 - Set `SECURE_COOKIES=1` behind HTTPS.
 - Rate limiting is DB-query based (simple, reliable for v1); a Redis sliding window
   can replace it later.
