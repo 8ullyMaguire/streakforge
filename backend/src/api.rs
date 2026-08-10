@@ -35,10 +35,17 @@ pub async fn require_user(session: &Session) -> ApiResult<SessionUser> {
 pub struct LogRequest {
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct LogResponse {
+    pub stats: StatsResponse,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DrillResponse {
     pub stats: StatsResponse,
 }
 
@@ -123,7 +130,36 @@ pub struct UpdateProfileRequest {
 
 // ---- Rate limiting ----
 
-async fn check_rate_limits(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogKind {
+    Habit,
+    Affirmation,
+}
+
+impl LogKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LogKind::Habit => "habit",
+            LogKind::Affirmation => "affirmation",
+        }
+    }
+}
+
+impl Default for LogKind {
+    fn default() -> Self {
+        LogKind::Habit
+    }
+}
+
+pub fn parse_kind(s: Option<&str>) -> LogKind {
+    match s {
+        Some("affirmation") => LogKind::Affirmation,
+        _ => LogKind::Habit,
+    }
+}
+
+async fn check_rate_limits(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> ApiResult<()> {
     let now = OffsetDateTime::now_utc();
     let hour_ago = now - time::Duration::minutes(60);
     let today_start = now.date();
@@ -131,12 +167,13 @@ async fn check_rate_limits(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<()> 
 
     let (last_60m, today_count): (i64, i64) = sqlx::query_as(
         "select
-           (select count(*) from habit_logs where user_id = $1 and logged_at >= $2),
-           (select count(*) from habit_logs where user_id = $1 and logged_at >= $3)",
+           (select count(*) from habit_logs where user_id = $1 and kind = $4 and logged_at >= $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = $4 and logged_at >= $3)",
     )
     .bind(user_id)
     .bind(hour_ago)
     .bind(today_start_dt)
+    .bind(kind.as_str())
     .fetch_one(pool)
     .await?;
 
@@ -158,7 +195,7 @@ async fn check_rate_limits(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<()> 
     Ok(())
 }
 
-fn next_allowed_at(user: &SessionUser, today_count: i64, last_60m: i64) -> Option<String> {
+fn next_allowed_at(today_count: i64, last_60m: i64) -> Option<String> {
     if last_60m >= HOURLY_LIMIT {
         let next = OffsetDateTime::now_utc() + time::Duration::minutes(60);
         Some(
@@ -191,16 +228,18 @@ pub async fn log_habit(
     if note.chars().count() > 140 {
         return Err(ApiError::bad_request("Note must be 140 characters or fewer"));
     }
+    let kind = parse_kind(body.kind.as_deref());
 
-    check_rate_limits(&state.pool, user.id).await?;
+    check_rate_limits(&state.pool, user.id, kind).await?;
 
-    sqlx::query("insert into habit_logs (user_id, note) values ($1, $2)")
+    sqlx::query("insert into habit_logs (user_id, note, kind) values ($1, $2, $3)")
         .bind(user.id)
         .bind(note)
+        .bind(kind.as_str())
         .execute(&state.pool)
         .await?;
 
-    let stats = compute_stats(&state.pool, user.id).await?;
+    let stats = compute_stats(&state.pool, user.id, kind).await?;
     Ok((StatusCode::CREATED, Json(LogResponse { stats })))
 }
 
@@ -209,11 +248,21 @@ pub async fn get_stats(
     session: Session,
 ) -> ApiResult<Json<StatsResponse>> {
     let user = require_user(&session).await?;
-    let stats = compute_stats(&state.pool, user.id).await?;
+    let stats = compute_stats(&state.pool, user.id, LogKind::Habit).await?;
     Ok(Json(stats))
 }
 
-async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<StatsResponse> {
+/// Drill stats — affirmation-specific counters + rate-limit state.
+pub async fn get_drill(
+    State(state): State<AppState>,
+    session: Session,
+) -> ApiResult<Json<DrillResponse>> {
+    let user = require_user(&session).await?;
+    let stats = compute_stats(&state.pool, user.id, LogKind::Affirmation).await?;
+    Ok(Json(DrillResponse { stats }))
+}
+
+async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> ApiResult<StatsResponse> {
     let now = OffsetDateTime::now_utc();
     let hour_ago = now - time::Duration::minutes(60);
     let today_start = now.date().midnight().assume_utc();
@@ -221,36 +270,42 @@ async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<StatsRes
 
     let (today_count, week_count, alltime_count): (i64, i64, i64) = sqlx::query_as(
         "select
-           (select count(*) from habit_logs where user_id = $1 and log_date = (now() at time zone 'utc')::date),
-           (select count(*) from habit_logs where user_id = $1 and logged_at >= $2),
-           (select count(*) from habit_logs where user_id = $1)",
+           (select count(*) from habit_logs where user_id = $1 and kind = $4 and log_date = (now() at time zone 'utc')::date),
+           (select count(*) from habit_logs where user_id = $1 and kind = $4 and logged_at >= $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = $4)",
     )
     .bind(user_id)
     .bind(week_start)
+    .bind(today_start)
+    .bind(kind.as_str())
     .fetch_one(pool)
     .await?;
 
     let last_60m: i64 = sqlx::query_scalar(
-        "select count(*) from habit_logs where user_id = $1 and logged_at >= $2",
+        "select count(*) from habit_logs where user_id = $1 and kind = $3 and logged_at >= $2",
     )
     .bind(user_id)
     .bind(hour_ago)
+    .bind(kind.as_str())
     .fetch_one(pool)
     .await?;
 
     let (current_streak, longest_streak): (i64, i64) = sqlx::query_as(
-        "select current_streak::bigint, longest_streak::bigint from user_streak($1)",
+        "select current_streak::bigint, longest_streak::bigint from user_streak_kind($1, $2)",
     )
     .bind(user_id)
+    .bind(kind.as_str())
     .fetch_one(pool)
     .await?;
 
     let recent: Vec<FeedItem> = sqlx::query_as::<_, (i64, uuid::Uuid, String, Option<String>, Option<String>, OffsetDateTime, Option<String>)>(
         "select l.id, l.user_id, p.username, p.display_name, p.avatar_url, l.logged_at, l.note
          from habit_logs l join profiles p on p.id = l.user_id
-         where l.user_id = $1 order by l.logged_at desc limit 20",
+         where l.user_id = $1 and l.kind = $3 order by l.logged_at desc limit 20",
     )
     .bind(user_id)
+    .bind(today_start)
+    .bind(kind.as_str())
     .fetch_all(pool)
     .await?
     .into_iter()
@@ -275,7 +330,7 @@ async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<StatsRes
         recent_logs: recent,
         last_60m,
         can_log,
-        next_allowed_at: if can_log { None } else { next_allowed_at(&SessionUser{ id: user_id, username: String::new(), display_name: None, avatar_url: None, provider: String::new() }, today_count, last_60m) },
+        next_allowed_at: if can_log { None } else { next_allowed_at(today_count, last_60m) },
     })
 }
 
@@ -340,7 +395,7 @@ pub async fn get_user_of_the_day(
 }
 
 pub async fn get_total(State(state): State<AppState>) -> ApiResult<Json<HashMap<&'static str, i64>>> {
-    let total: i64 = sqlx::query_scalar("select count(*) from habit_logs").fetch_one(&state.pool).await?;
+    let total: i64 = sqlx::query_scalar("select count(*) from habit_logs where kind = 'habit'").fetch_one(&state.pool).await?;
     Ok(Json(HashMap::from([("total", total)])))
 }
 
@@ -404,9 +459,9 @@ pub async fn get_profile(
     let week_start = week_start_utc(OffsetDateTime::now_utc());
     let (today_count, week_count, alltime_count): (i64, i64, i64) = sqlx::query_as(
         "select
-           (select count(*) from habit_logs where user_id = $1 and log_date = (now() at time zone 'utc')::date),
-           (select count(*) from habit_logs where user_id = $1 and logged_at >= $2),
-           (select count(*) from habit_logs where user_id = $1)",
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit' and log_date = (now() at time zone 'utc')::date),
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit' and logged_at >= $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit')",
     )
     .bind(id)
     .bind(week_start)
@@ -499,9 +554,9 @@ pub async fn update_profile(
     let week_start = week_start_utc(OffsetDateTime::now_utc());
     let (today_count, week_count, alltime_count): (i64, i64, i64) = sqlx::query_as(
         "select
-           (select count(*) from habit_logs where user_id = $1 and log_date = (now() at time zone 'utc')::date),
-           (select count(*) from habit_logs where user_id = $1 and logged_at >= $2),
-           (select count(*) from habit_logs where user_id = $1)",
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit' and log_date = (now() at time zone 'utc')::date),
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit' and logged_at >= $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit')",
     )
     .bind(id)
     .bind(week_start)

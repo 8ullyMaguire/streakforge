@@ -27,9 +27,9 @@
 		if (logging) return;
 		logging = true;
 		try {
-			const s = await api.logHabit(note.trim() || undefined);
+			const res = await api.logHabit(note.trim() || undefined);
 			note = '';
-			onLogged?.(s);
+			onLogged?.(res.stats);
 			pushToast('Completion logged. Forge on.');
 		} catch (e) {
 			if (e instanceof ApiRequestError && e.status === 429) {

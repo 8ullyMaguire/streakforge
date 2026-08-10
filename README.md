@@ -17,7 +17,11 @@ highlights, mono-spaced tabular counters, and a scrolling marquee.
 ## Features
 
 - **One-button logging** — large "Log Completion" button on the dashboard.
-- **Rate limiting (server-enforced)**:
+- **Affirmation Drill** — a `/drill` page with a wlw-style big tabular counter,
+  a cycling affirmation deck, and a "REPEAT" button. Affirmation reps log under
+  a separate `kind` with their own rate-limit budget (1/hr, 5/day), so the drill
+  doesn't consume (or pollute) your habit budget.
+- **Rate limiting (server-enforced, per kind)**:
   - Max 1 log per 60 minutes per user.
   - Max 5 logs per UTC calendar day per user.
   - Clear 429 error messages with "next allowed at" hints.
@@ -136,8 +140,9 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | GET    | `/api/auth/x`             | —    | Start X OAuth (redirects to X)       |
 | GET    | `/api/auth/x/callback`    | —    | OAuth callback                       |
 | POST   | `/api/auth/dev-login`     | —    | Dev login (if enabled)               |
-| POST   | `/api/logs`               | ✓    | Log a completion (rate-limited)      |
-| GET    | `/api/stats`              | ✓    | Personal stats + recent logs         |
+| POST   | `/api/logs`               | ✓    | Log a completion (rate-limited, `kind` = habit|affirmation) |
+| GET    | `/api/stats`              | ✓    | Personal habit stats + recent logs         |
+| GET    | `/api/drill`              | ✓    | Affirmation drill stats (separate budget)  |
 | GET    | `/api/leaderboard/{period}` | —  | daily / weekly / alltime             |
 | GET    | `/api/user-of-the-day`    | —    | Today's top user                     |
 | GET    | `/api/total`              | —    | Total completions (hero counter)     |
@@ -162,8 +167,10 @@ with `row_number()` grouping).
 
 ### Rate limits
 
-- 1 log / 60 min / user — checked against `logged_at >= now() - 60 min`.
-- 5 logs / UTC day / user — checked against `log_date = today (UTC)`.
+- 1 log / 60 min / user / kind — checked against `logged_at >= now() - 60 min`.
+- 5 logs / UTC day / user / kind — checked against `log_date = today (UTC)`.
+- `habit` and `affirmation` have independent budgets (drilling doesn't consume
+  your daily habit allowance).
 - Enforced in `check_rate_limits()` in `api.rs`, before any insert.
 
 ### User of the Day

@@ -56,6 +56,12 @@ export interface Stats {
 	next_allowed_at: string | null;
 }
 
+export interface DrillResponse {
+	stats: Stats;
+}
+
+export type LogKind = 'habit' | 'affirmation';
+
 export type LeaderboardPeriod = 'daily' | 'weekly' | 'alltime';
 
 export interface Leaderboard {

@@ -40,6 +40,7 @@
 
 	const links = [
 		{ href: '/dashboard', label: 'DASHBOARD' },
+		{ href: '/drill', label: 'DRILL' },
 		{ href: '/leaderboard', label: 'LEADERBOARD' },
 		{ href: '/feed', label: 'FEED' },
 		{ href: '/manifesto', label: 'MANIFESTO' }

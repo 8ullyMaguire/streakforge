@@ -203,3 +203,62 @@ async fn feed_pagination(pool: PgPool) {
     assert_eq!(page2.len(), 2);
     assert!(page2[0].0 < last_id);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn affirmation_kind_separated_from_community(pool: PgPool) {
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('driller') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // 2 habit logs + 3 affirmation reps
+    for _ in 0..2 {
+        sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'habit')")
+            .bind(uid)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    for _ in 0..3 {
+        sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'affirmation')")
+            .bind(uid)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // drill streak counts only affirmation days (today = 1 day -> streak 1)
+    let (cur, longest): (i32, i32) =
+        sqlx::query_as("select * from user_streak_kind($1, 'affirmation')")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((cur, longest), (1, 1));
+
+    // alltime leaderboard counts only habits
+    let rows: Vec<(uuid::Uuid, i64)> =
+        sqlx::query_as("select user_id, count from alltime_leaderboard(10)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].1, 2); // 2 habits, not 5
+
+    // feed excludes affirmations
+    let feed: Vec<(i64, String)> =
+        sqlx::query_as("select id, username from activity_feed(0, 10)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(feed.len(), 2); // only habit logs
+
+    // total excludes affirmations
+    let total: i64 = sqlx::query_scalar("select * from total_logs()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(total, 2);
+}

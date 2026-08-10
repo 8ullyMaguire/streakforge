@@ -1,9 +1,11 @@
 // API client — talks to the Rust backend at /api/*
 import type {
 	ApiError,
+	DrillResponse,
 	FeedItem,
 	Leaderboard,
 	LeaderboardPeriod,
+	LogKind,
 	ManifestoList,
 	Profile,
 	SessionUser,
@@ -45,9 +47,13 @@ export class ApiRequestError extends Error {
 export const api = {
 	me: () => request<SessionUser>('/auth/me'),
 	logout: () => request<void>('/auth/logout', { method: 'POST' }),
-	logHabit: (note?: string) =>
-		request<Stats>('/logs', { method: 'POST', body: JSON.stringify({ note: note ?? '' }) }),
+	logHabit: (note?: string, kind: LogKind = 'habit') =>
+		request<{ stats: Stats }>('/logs', {
+			method: 'POST',
+			body: JSON.stringify({ note: note ?? '', kind })
+		}),
 	stats: () => request<Stats>('/stats'),
+	drill: () => request<DrillResponse>('/drill'),
 	leaderboard: (period: LeaderboardPeriod) => request<Leaderboard>(`/leaderboard/${period}`),
 	userOfTheDay: () => request<UserOfTheDay>('/user-of-the-day'),
 	feed: (cursor?: string) =>

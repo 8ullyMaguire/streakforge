@@ -12,13 +12,16 @@ Last updated: 2026-08-10
 - [x] `activity_feed()` — cursor pagination
 - [x] `profile_stats()` — today / week / alltime / streaks
 - [x] Auth: X OAuth 2.0 (PKCE) + dev-login + Postgres-backed sessions
-- [x] Rate limits: 1/hr + 5/day (server-enforced, 429 with clear messages)
-- [x] All endpoints: /auth/*, /logs, /stats, /leaderboard/*, /user-of-the-day,
+- [x] Rate limits: 1/hr + 5/day per kind (habit vs affirmation), server-enforced
+- [x] Affirmation drill: `/api/drill` stats + `kind` on `/api/logs`; drill reps
+      kept out of leaderboards/feed/total (separate community surface)
+- [x] All endpoints: /auth/*, /logs, /stats, /drill, /leaderboard/*, /user-of-the-day,
       /total, /feed, /profile/*, /profile (PATCH)
 - [x] SPA static serving + client-route fallback (adapter-static build)
 - [x] Manifesto: `/api/manifesto` + `/api/manifesto/{id}` — serves markdown docs
       from a configurable directory (path-traversal sanitized)
-- [x] Integration tests (5 passing) for streak calc, leaderboards, UOTD, feed
+- [x] Integration tests (6 passing) for streak calc, leaderboards, UOTD, feed,
+      affirmation-kind separation
 
 ### Frontend (SvelteKit / Svelte 5)
 - [x] wlw-style dark theme (near-black, red/gold, Inter + Roboto Mono)
@@ -32,8 +35,11 @@ Last updated: 2026-08-10
 - [x] Profile: public stats, DiceBear avatar fallback
 - [x] Settings: edit username / display name / avatar URL
 - [x] Manifesto: sidebar doc list + rendered markdown viewer (dark theme)
+- [x] Drill: wlw-style big counter, affirmation deck, REPEAT (rate-limit aware),
+      streak cards + heatmap
 - [x] Toasts, skeletons, empty states, 401 redirect to /login
-- [x] Frontend tests (20 passing): api utils, validation, markdown renderer
+- [x] Frontend tests (24 passing): api utils, validation, markdown renderer,
+      affirmations deck
 - [x] `npm run check` clean (0 errors)
 
 ## Verification evidence

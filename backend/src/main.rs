@@ -77,6 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/auth/dev-login", post(auth::dev_login))
         .route("/logs", post(streakforge_api::api::log_habit))
         .route("/stats", get(streakforge_api::api::get_stats))
+        .route("/drill", get(streakforge_api::api::get_drill))
         .route("/leaderboard/{period}", get(streakforge_api::api::get_leaderboard))
         .route("/user-of-the-day", get(streakforge_api::api::get_user_of_the_day))
         .route("/total", get(streakforge_api::api::get_total))
