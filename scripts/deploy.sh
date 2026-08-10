@@ -2,7 +2,8 @@
 # StreakForge deploy to ThinkCentre (mirrors FicHub setup).
 # - Syncs release binary + frontend build + migrations + manifestos to ThinkCentre
 # - Sets up /var/www/streakforge (static) + /personal/documents/code/streakforge (bin)
-# - Installs systemd service on port 8001 + nginx site (proxy /api -> 8001)
+# - Installs systemd service on port 8001 (backend serves static + API directly,
+#   mirroring fichub on 8000 — nginx is inactive on the ThinkCentre)
 # Usage: scripts/deploy.sh [thinkcentre-host]
 set -euo pipefail
 
