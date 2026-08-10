@@ -15,7 +15,15 @@ use tower_sessions::{Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
 
 // SPA fallback: serve index.html for any non-API route (client-side routing).
-async fn spa_fallback(State(state): State<AppState>) -> impl IntoResponse {
+// Unknown /api/* paths return 404 (a missing endpoint should not masquerade
+// as the SPA shell — this also makes stale route probing fail loudly).
+async fn spa_fallback(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+) -> impl IntoResponse {
+    if request.uri().path().starts_with("/api/") {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
     let path = std::path::Path::new(&state.cfg.web_build_dir).join("index.html");
     match tokio::fs::read(&path).await {
         Ok(body) => (
