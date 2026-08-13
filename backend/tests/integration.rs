@@ -520,3 +520,197 @@ async fn challenge_proof_matches_client_computation(_pool: PgPool) {
     assert!(!auth::challenge_proof_valid("", &nonce, username, password));
     assert!(!auth::challenge_proof_valid("zzzzzzzzzzzzzzzz", &nonce, username, password));
 }
+
+// ---- Denial & lock subsystem (0005 migration) ----
+
+#[sqlx::test(migrations = "./migrations")]
+async fn denial_kind_separated_and_streak(pool: PgPool) {
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('denier') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // 2 denial logs today -> denial streak 1 day
+    for _ in 0..2 {
+        sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'denial')")
+            .bind(uid)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let (cur, longest): (i32, i32) =
+        sqlx::query_as("select * from user_streak_kind($1, 'denial')")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((cur, longest), (1, 1));
+
+    // total_denied counts only denials
+    let denied: i64 = sqlx::query_scalar("select * from total_denied()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(denied, 2);
+
+    // main total excludes denials
+    let total: i64 = sqlx::query_scalar("select * from total_logs()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(total, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn weighted_leaderboard_denial_dominates(pool: PgPool) {
+    // A: 1 waste. B: 1 denial. Denial = 10 pts, waste = 1 pt -> B ranks first.
+    let a = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('waster') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let b = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('denier_lead') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'habit')")
+        .bind(a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'denial')")
+        .bind(b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let rows: Vec<(uuid::Uuid, i64, i64, i64)> =
+        sqlx::query_as("select user_id, points, waste_count, denial_count from daily_leaderboard_weighted(10)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, b); // denial (10 pts) beats waste (1 pt)
+    assert_eq!(rows[0].1, 10);
+    assert_eq!(rows[0].2, 0);
+    assert_eq!(rows[0].3, 1);
+    assert_eq!(rows[1].0, a);
+    assert_eq!(rows[1].1, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lock_lifecycle_and_streak(pool: PgPool) {
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('caged') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // initially unlocked
+    let (locked, cur, longest): (bool, i32, i32) =
+        sqlx::query_as("select locked, current_streak, longest_streak from lock_info($1), lock_streak($1)")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!locked);
+    assert_eq!((cur, longest), (0, 0));
+
+    // lock now
+    sqlx::query("insert into lock_sessions (user_id) values ($1)")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (locked, cur, longest): (bool, i32, i32) =
+        sqlx::query_as("select locked, current_streak, longest_streak from lock_info($1), lock_streak($1)")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(locked);
+    assert_eq!((cur, longest), (1, 1));
+
+    // unlock with a reason, then re-lock shortly after (<=24h gap preserves streak)
+    sqlx::query("update lock_sessions set unlocked_at = now(), reason = 'clean' where user_id = $1 and unlocked_at is null")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("insert into lock_sessions (user_id) values ($1)")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (locked, cur, longest): (bool, i32, i32) =
+        sqlx::query_as("select locked, current_streak, longest_streak from lock_info($1), lock_streak($1)")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(locked);
+    assert_eq!(cur, 2); // 2 consecutive lock periods
+    assert_eq!(longest, 2);
+
+    // a lock >24h after the last unlock breaks the streak
+    sqlx::query("update lock_sessions set unlocked_at = now() where user_id = $1 and unlocked_at is null")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("insert into lock_sessions (user_id, locked_at) values ($1, now() + interval '25 hours')")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (cur, longest): (i32, i32) =
+        sqlx::query_as("select current_streak, longest_streak from lock_streak($1)")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cur, 1); // only the new lock period is current
+    assert_eq!(longest, 2); // historical max preserved
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lock_total_time_counts(pool: PgPool) {
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('longlock') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // 2-day lock that ended
+    sqlx::query(
+        "insert into lock_sessions (user_id, locked_at, unlocked_at) values ($1, now() - interval '2 days', now() - interval '1 day')",
+    )
+    .bind(uid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // current lock started 1 day ago
+    sqlx::query("insert into lock_sessions (user_id, locked_at) values ($1, now() - interval '1 day')")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (total_secs, longest_secs): (i64, i64) = sqlx::query_as(
+        "select extract(epoch from total_locked)::bigint, extract(epoch from longest_lock)::bigint from lock_info($1)",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // 1 day closed + 1 day current = 2 days total; longest single = 1 day (both are ~1 day)
+    assert!(total_secs >= 2 * 86400 - 120, "total_secs={total_secs}");
+    assert!(longest_secs <= 1 * 86400 + 120, "longest_secs={longest_secs}");
+}

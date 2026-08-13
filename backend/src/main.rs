@@ -11,7 +11,7 @@ use streakforge_api::AppState;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
-use tower_sessions::{Expiry, SessionManagerLayer};
+use tower_sessions::{cookie::time::Duration as CookieDuration, Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
 
 // SPA fallback: serve index.html for any non-API route (client-side routing).
@@ -54,8 +54,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let session_store = PostgresStore::new(pool.clone());
     session_store.migrate().await?;
     let key = tower_sessions::cookie::Key::generate();
+    // Remember users by default: sessions persist for 30 days of inactivity
+    // instead of ending when the browser closes. Combined with the signed
+    // cookie this means a returning whiteboi stays signed in.
     let session_layer = SessionManagerLayer::new(session_store)
-        .with_expiry(Expiry::OnSessionEnd)
+        .with_expiry(Expiry::OnInactivity(CookieDuration::days(30)))
         .with_signed(key)
         .with_secure(cfg.secure_cookies);
 
@@ -85,6 +88,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/logs", post(streakforge_api::api::log_habit))
         .route("/stats", get(streakforge_api::api::get_stats))
         .route("/drill", get(streakforge_api::api::get_drill))
+        .route("/denial", get(streakforge_api::api::get_denial))
+        .route("/lock", get(streakforge_api::api::get_lock))
+        .route("/lock", post(streakforge_api::api::lock))
+        .route("/unlock", post(streakforge_api::api::unlock))
         .route("/leaderboard/{period}", get(streakforge_api::api::get_leaderboard))
         .route("/user-of-the-day", get(streakforge_api::api::get_user_of_the_day))
         .route("/total", get(streakforge_api::api::get_total))
