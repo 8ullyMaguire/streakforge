@@ -1,0 +1,1 @@
+import{b as u,o as n,g as s,s as a}from"./DToZGpbZ.js";let t=u(n([])),c=1;function f(e,o="success"){const i=c++;a(t,[...s(t),{id:i,message:e,type:o}],!0),setTimeout(()=>{a(t,s(t).filter(r=>r.id!==i),!0)},4200)}function p(){return s(t)}function g(e){a(t,s(t).filter(o=>o.id!==e),!0)}export{g as d,p as g,f as p};

@@ -1,0 +1,5 @@
+I know that WBCH exists and it works for many whiteboys but there’s a way that works better for me and might be interesting to others  
+
+Find a porn video of your choice featuring a black man. It doesn’t matter if he has sex with a woman, a white boy or anyone else, just your personal preference. When he penetrates, start beating your balls. Follow each of his thrust with a hit. Replicate his speed and intensity. Try to follow his every move. Establish the connection between his pleasure and the sensations in your balls, as well as the difference in your roles. When he cums and releases his seed, beat your balls even harder, as if you want to replicate the intensity but in a way that’s appropriate for a white boy. His balls get a release, your balls get intense beating. Sounds fair to me  
+
+This way it’s easier to quit the “usual” way of masturbation while watching porn and get used to plapping. It’s also very convenient because you can choose any kind of porn you want and easily make it a plapping material
