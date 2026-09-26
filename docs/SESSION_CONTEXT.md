@@ -44,7 +44,7 @@
    daily/weekly/alltime leaderboards, UOTD, feed, X OAuth + dev login, wlw theme,
    landing/dashboard/leaderboard/feed/profile/settings.
 2. **Scripts** (`706dce1`) — `scripts/dev.sh`, `scripts/seed.sql`.
-3. **Manifesto** (`71b52a2`) — `/manifesto` page + `/api/manifesto*` serving 9
+3. **Doctrine** (`71b52a2` + renames) — `/doctrine` page + `/api/doctrine*` serving
    markdown docs from `manifestos/`; custom markdown renderer (XSS-safe).
 4. **Affirmation Drill** (`8e01e64`) — `/drill` page with wlw counter + affirmation
    deck; `kind` column on habit_logs; per-kind rate limits; drill reps excluded from
@@ -71,7 +71,7 @@
 - API client: `web/src/lib/api.ts` (types in `types.ts`).
 - Affirmation deck: `web/src/lib/affirmations.ts`.
 - Markdown renderer: `web/src/lib/markdown.ts`.
-- Manifesto content: `manifestos/*.md` (9 docs).
+- Doctrine content: `manifestos/*.md` (10 docs).
 - Deploy: `scripts/deploy.sh`, prod .env on thinkcentre.
 
 ---

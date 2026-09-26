@@ -1,20 +1,47 @@
-# Rust
-backend/target/
-**/*.rs.bk
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+target/
+build/
+dist/
+*.egg-info/
+Cargo.lock
 
-# Node / Svelte
-web/node_modules/
-web/build/
-web/.svelte-kit/
-web/package-lock.json
-npm-debug.log*
-
-# Env
+# Environment and secrets
 .env
-.env.local
+.env.*
+!.env.example
+!.env.sample
+credentials
+secrets.*
+*.key
+*.pem
+*.cert
+*.p12
 
-# OS / editor
-.DS_Store
-*.swp
-.idea/
+# IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Backup
+*.bak/
+*.old/
+*.bak.*/
+
+# SvelteKit
+.svelte-kit/
+web/.svelte-kit/
+

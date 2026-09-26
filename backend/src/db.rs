@@ -10,7 +10,7 @@ pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
     Ok(pool)
 }
 
-pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
-    let migrator = Migrator::new(Path::new("./migrations")).await?;
+pub async fn run_migrations(pool: &PgPool, migrations_dir: &str) -> Result<(), sqlx::migrate::MigrateError> {
+    let migrator = Migrator::new(Path::new(migrations_dir)).await?;
     migrator.run(pool).await
 }

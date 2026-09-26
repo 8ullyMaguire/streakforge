@@ -6,10 +6,12 @@
 	import Marquee from '$lib/components/Marquee.svelte';
 
 	let total = $state<number | null>(null);
+	let denied = $state<number | null>(null);
 	let daily = $state<Leaderboard | null>(null);
 	let uotd = $state<UserOfTheDay | null>(null);
 	let recentFeed = $state<FeedItem[]>([]);
 	let loaded = $state(false);
+	let signedIn = $state(false);
 
 	onMount(async () => {
 		try {
@@ -23,43 +25,78 @@
 			daily = dailyRes;
 			recentFeed = feedRes.items.slice(0, 8);
 			total = totalRes.total;
+			denied = totalRes.denied ?? 0;
 		} catch {
 			// tolerate partial failure — page still renders
 		}
-		loaded = true;
+		// check auth to decide the primary CTA
+		api
+			.me()
+			.then((u) => {
+				signedIn = !!u;
+			})
+			.catch(() => {
+				signedIn = false;
+			})
+			.finally(() => {
+				loaded = true;
+			});
 	});
 
-	// render total as wlw-style colored digits: green for last 3, black for the rest
+	// render total as wlw-style colored digits: first 3 red, last 3 green, middle black
 	function digitClass(i: number, len: number) {
-		return i >= len - 3 ? 'digit-green' : 'digit-black';
+		if (i < 3) return 'digit-red';
+		if (i >= len - 3) return 'digit-green';
+		return 'digit-black';
 	}
 </script>
 
 <svelte:head>
-	<title>StreakForge — Consistency is Power</title>
+	<title>StreakForge — Embrace Defeat. The Future Is Black.</title>
 </svelte:head>
 
 <section class="hero">
-	<div class="tagline">EMBRACE THE STREAK. THE FUTURE IS CONSISTENT.</div>
+	<div class="tagline">EMBRACE DEFEAT. THE FUTURE IS BLACK.</div>
 	<h1>StreakForge</h1>
 	<p class="sub">
-		Log your daily completions. Build unbreakable streaks. Climb the leaderboard.
-		Own your consistency.
+		Whitebois don't just track habits. They deny. They lock. They waste when permitted.
+		And the board remembers who knows their place.
 	</p>
 	{#if total !== null}
-		<div class="counter counter-digits" aria-label="Total completions {total}">
-			{#each String(total).padStart(8, '0').split('') as ch, i (i)}
-				<span class={digitClass(i, 8)}>{ch}</span>
+		<div class="counter counter-digits" aria-label="Loads wasted {total}">
+			{#each String(total).padStart(9, '0').split('') as ch, i (i)}
+				<span class={digitClass(i, 9)}>{ch}</span>
 			{/each}
 		</div>
+		<p style="color:var(--text-dim);font-size:13px;letter-spacing:0.2em;text-transform:uppercase;margin:4px 0 8px;">
+			loads wasted
+		</p>
+	{/if}
+	{#if denied !== null && denied > 0}
+		<div class="counter counter-digits counter-denied" aria-label="Loads denied {denied}">
+			{#each String(denied).padStart(9, '0').split('') as ch, i (i)}
+				<span class={digitClass(i, 9)}>{ch}</span>
+			{/each}
+		</div>
+		<p style="color:var(--text-dim);font-size:13px;letter-spacing:0.2em;text-transform:uppercase;margin:4px 0 8px;">
+			loads denied
+		</p>
 	{/if}
 
 	<div class="cta-row">
-		<a href="/login" class="btn btn-red btn-lg">START LOGGING</a>
-		<a href="/leaderboard" class="btn btn-ghost btn-lg">VIEW LEADERBOARD</a>
+		{#if signedIn}
+			<a href="/dashboard" class="btn btn-red btn-lg">WASTE A LOAD</a>
+		{:else}
+			<a href="/login" class="btn btn-red btn-lg">KNOW YOUR PLACE</a>
+		{/if}
+		<a href="/leaderboard" class="btn btn-ghost btn-lg">VIEW THE BOARD</a>
 	</div>
 	<p style="color:var(--text-dim);font-size:13px;margin-top:14px;">
-		Create an account. Own your submission.
+		{#if signedIn}
+			Waste only when permitted. The board remembers.
+		{:else}
+			Create an account. Own your submission. Deny harder.
+		{/if}
 	</p>
 </section>
 
@@ -73,9 +110,9 @@
 	<div class="container" style="max-width:640px;margin-bottom:28px;">
 		<div class="uotd">
 			<div class="crown">👑</div>
-			<div>USER OF THE DAY</div>
+			<div>WHITEBOI OF THE DAY</div>
 			<div class="handle">{uotd.username}</div>
-			<div class="count">{uotd.count} completions today</div>
+			<div class="count">{uotd.points} points · 24h</div>
 			<div class="sub">
 				{#if uotd.display_name}{uotd.display_name} · {/if}
 				first log {timeAgo(uotd.first_log_at)} · {uotd.alltime_count} all-time
@@ -87,15 +124,15 @@
 <div class="container">
 	{#if daily}
 		<h2 style="font-size:18px;letter-spacing:0.08em;margin:20px 0 12px;">
-			TOP FORGERS TODAY
+			WHITEBOIS WHO KNOW THEIR PLACE
 		</h2>
 		<div class="card" style="padding:0;overflow:hidden;">
 			<table class="board">
 				<thead>
 					<tr>
 						<th style="width:48px;">#</th>
-						<th>FORGER</th>
-						<th style="text-align:right;">COUNT</th>
+						<th>WHITEBOI</th>
+						<th style="text-align:right;">POINTS</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -106,17 +143,23 @@
 							</td>
 							<td class="username">
 								<a href={`/profile/${e.username}`}>{e.username}</a>
+								{#if e.denial_count > 0}
+									<span class="denial-badge" title="{e.denial_count} denials">💧{e.denial_count}</span>
+								{/if}
 							</td>
-							<td class="count">{e.count}</td>
+							<td class="count">{e.points}</td>
 						</tr>
 					{/each}
 				</tbody>
 			</table>
 		</div>
+		<p style="color:var(--text-dim);font-size:12px;margin-top:10px;text-align:center;">
+			Denial counts 10× a waste. Three affirmations = one wasted load. The board rewards denial, not waste.
+		</p>
 	{/if}
 
 	{#if recentFeed.length > 0}
-		<h2 style="font-size:18px;letter-spacing:0.08em;margin:28px 0 12px;">RECENT ACTIVITY</h2>
+		<h2 style="font-size:18px;letter-spacing:0.08em;margin:28px 0 12px;">CONFESSION FEED</h2>
 		<div class="card" style="padding:4px 18px;">
 			{#each recentFeed as item}
 				<div class="feed-item">
@@ -141,3 +184,10 @@
 		<div class="skeleton" style="height:220px;margin-top:24px;"></div>
 	</div>
 {/if}
+
+<style>
+	.counter-denied {
+		margin-top: 10px;
+		opacity: 0.85;
+	}
+</style>

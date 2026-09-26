@@ -2,10 +2,12 @@
 import type {
 	ApiError,
 	AuthPayload,
+	DenialResponse,
 	DrillResponse,
 	FeedItem,
 	Leaderboard,
 	LeaderboardPeriod,
+	LockInfo,
 	LogKind,
 	ManifestoList,
 	Profile,
@@ -58,6 +60,14 @@ export const api = {
 		}),
 	stats: () => request<Stats>('/stats'),
 	drill: () => request<DrillResponse>('/drill'),
+	denial: () => request<DenialResponse>('/denial'),
+	lock: () => request<LockInfo>('/lock', { method: 'POST' }),
+	unlock: (reason?: string) =>
+		request<LockInfo>('/unlock', {
+			method: 'POST',
+			body: JSON.stringify({ reason: reason ?? '' })
+		}),
+	lockState: () => request<LockInfo>('/lock'),
 	leaderboard: (period: LeaderboardPeriod) => request<Leaderboard>(`/leaderboard/${period}`),
 	userOfTheDay: () => request<UserOfTheDay>('/user-of-the-day'),
 	feed: (cursor?: string) =>
@@ -67,10 +77,10 @@ export const api = {
 	profile: (username: string) => request<Profile>(`/profile/${encodeURIComponent(username)}`),
 	updateProfile: (data: { username?: string; display_name?: string; avatar_url?: string; social_url?: string }) =>
 		request<Profile>('/profile', { method: 'PATCH', body: JSON.stringify(data) }),
-	manifestoList: () => request<ManifestoList>('/manifesto'),
+	manifestoList: () => request<ManifestoList>('/doctrine'),
 	manifestoDoc: async (id: string) => {
 		const res = await request<{ id: string; content: string }>(
-			`/manifesto/${encodeURIComponent(id)}`
+			`/doctrine/${encodeURIComponent(id)}`
 		);
 		return res.content;
 	}
@@ -92,5 +102,5 @@ export function timeAgo(iso: string, now: Date = new Date()): string {
 }
 
 export function formatCount(n: number): string {
-	return n.toString().padStart(8, '0');
+	return n.toString().padStart(9, '0');
 }

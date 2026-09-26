@@ -1,17 +1,16 @@
 # StreakForge
 
-A habit & streak tracker with community leaderboards — dark, counter-driven, and
-social. Log daily completions, build unbreakable streaks, climb the leaderboard,
-and own your consistency.
+A whiteboi denial & accountability tracker with community leaderboards — dark,
+counter-driven, and social. Log wastes when permitted, report denials, track
+chastity locks, drill affirmations by typing them, and climb the board.
 
 Built with **Rust (axum) + SvelteKit (Svelte 5)** and PostgreSQL. The UI theme
 mirrors the aesthetic of wlw.grok.me: near-black background, red accent, gold
 highlights, mono-spaced tabular counters, and a scrolling marquee.
 
-> **Content note:** the core habit tracker is content-neutral, but the site also
-> hosts the owner's curated BNWO manifesto texts (`/manifesto`) and an affirmation
-> drill (`/drill`) — matching the subject matter of the reference site wlw.grok.me
-> per owner request.
+> **Content note:** the core tracker is themed around BNWO denial kink per owner
+> request — "Embrace Defeat. The Future Is Black." — and hosts the owner's curated
+> BNWO doctrine texts (`/doctrine`) plus a typed affirmation drill (`/drill`).
 
 ---
 
@@ -49,9 +48,11 @@ Plus `STATUS.md` for the living dev-status checklist.
 - **Public activity feed** — reverse-chronological, cursor-paginated, with notes.
 - **Profiles** — public username, display name, avatar (DiceBear fallback),
   stats. Editable in Settings.
-- **Manifesto** — a `/manifesto` page serving curated doctrine/training texts
+- **Doctrine** — a `/doctrine` page serving curated doctrine/training texts
   (commandments, guides, socials) from the `manifestos/` directory, rendered
   markdown in the wlw-style theme.
+- **Installable app** — PWA shell (`/manifest.webmanifest` + spade icon) with an
+  `/app` install guide (Firefox/Chrome/Safari/desktop "add to home screen").
 - **Auth** — local username/password (Argon2id) with session cookies.
   Bot-dissuasion on the public forms: hidden honeypot field, form timing
   (3s–10min window), and a JS proof-of-work challenge (sha256 over a
@@ -166,8 +167,8 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | GET    | `/api/feed`               | —    | Public feed (cursor + limit)         |
 | GET    | `/api/profile/{username}` | —    | Public profile stats (+ social_url)  |
 | PATCH  | `/api/profile`            | ✓    | Update username/display/avatar/social_url |
-| GET    | `/api/manifesto`          | —    | List manifesto docs                  |
-| GET    | `/api/manifesto/{id}`     | —    | Fetch a manifesto document (markdown)|
+| GET    | `/api/doctrine`          | —    | List doctrine docs                   |
+| GET    | `/api/doctrine/{id}`      | —    | Fetch a doctrine document (markdown) |
 
 ## Business Logic
 

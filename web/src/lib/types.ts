@@ -20,7 +20,7 @@ export interface UserOfTheDay {
 	username: string;
 	display_name: string | null;
 	avatar_url: string | null;
-	count: number;
+	points: number;
 	first_log_at: string;
 	alltime_count: number;
 }
@@ -31,7 +31,10 @@ export interface LeaderboardEntry {
 	username: string;
 	display_name: string | null;
 	avatar_url: string | null;
-	count: number;
+	points: number;
+	waste_count: number;
+	denial_count: number;
+	affirmation_count: number;
 	last_log_at: string | null;
 }
 
@@ -61,7 +64,24 @@ export interface DrillResponse {
 	stats: Stats;
 }
 
-export type LogKind = 'habit' | 'affirmation';
+export interface LockInfo {
+	locked: boolean;
+	locked_at?: string | null;
+	current_duration_secs: number;
+	total_locked_secs: number;
+	longest_lock_secs: number;
+	current_lock_streak: number;
+	longest_lock_streak: number;
+}
+
+export interface DenialResponse {
+	stats: Stats;
+	lock: LockInfo;
+	/** seconds until the next denial can be reported, or null if allowed now */
+	next_denial_allowed_in: number | null;
+}
+
+export type LogKind = 'habit' | 'affirmation' | 'denial';
 
 export type LeaderboardPeriod = 'daily' | 'weekly' | 'alltime';
 

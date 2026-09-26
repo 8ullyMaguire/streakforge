@@ -58,10 +58,10 @@
 		<div class="skeleton" style="height:300px;"></div>
 	{:else}
 		<h1 style="font-size:24px;letter-spacing:0.04em;margin:0 0 4px;">
-			FORGE YOUR STREAK
+			KNOW YOUR PLACE
 		</h1>
 		<p style="color:var(--text-dim);font-size:14px;margin:0 0 20px;">
-			One completion per hour. Five per day. That's the forge.
+			Waste only when permitted. One per hour. Five per day. Denial outranks everything.
 		</p>
 
 		<div class="stat-grid" style="margin-bottom:20px;">

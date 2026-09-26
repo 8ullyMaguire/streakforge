@@ -55,8 +55,27 @@ export const AFFIRMATIONS: Affirmation[] = [
 	{
 		text: 'I accept my place and find joy in service.',
 		source: 'affirmations'
+	},
+	{
+		text: 'I\u2019m racist and I submit!',
+		source: 'the drill gate'
+	},
+	{
+		text: 'I submit!',
+		source: 'the drill gate'
 	}
 ];
+
+// The affirmation that must be typed (and submitted with "I submit!") before
+// a whiteboi is allowed to waste a load. Typo-tolerant matching.
+export const GATE_AFFIRMATION: Affirmation = {
+	text: 'I\u2019m racist and I submit!',
+	source: 'required before wasting a load'
+};
+
+// The decline button — a whiteboi who hits this is choosing denial over waste.
+export const DECLINE_LABEL = 'I\u2019m racist';
+export const SUBMIT_LABEL = 'I submit!';
 
 export function affirmationOfTheDay(seed: string | number = Date.now()): Affirmation {
 	const day = Math.floor(Number(seed) / 86400000);

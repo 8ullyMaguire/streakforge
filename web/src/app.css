@@ -633,3 +633,136 @@ textarea:focus {
 	color: var(--text-dim);
 	font-size: 13px;
 }
+
+/* Denial badge on leaderboard rows */
+.denial-badge {
+	display: inline-block;
+	margin-left: 6px;
+	font-size: 11px;
+	color: #22c55e;
+	background: rgba(34, 197, 94, 0.12);
+	border-radius: 999px;
+	padding: 1px 7px;
+	vertical-align: middle;
+}
+
+/* Mobile-progressive layout */
+@media (max-width: 720px) {
+	.container {
+		padding: 0 14px;
+	}
+
+	.nav-inner {
+		height: 52px;
+		gap: 10px;
+	}
+
+	.nav-links {
+		display: none; /* top nav links hidden on mobile — bottom nav provides them */
+	}
+
+	.nav-brand {
+		font-size: 15px;
+	}
+
+	.nav-spacer {
+		flex: 1;
+	}
+
+	/* Leaderboard: cards instead of wide table */
+	.board {
+		display: block;
+		width: 100%;
+	}
+	.board thead {
+		display: none;
+	}
+	.board tbody {
+		display: block;
+	}
+	.board tr {
+		display: grid;
+		grid-template-columns: 36px 1fr auto;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 12px;
+		border-bottom: 1px solid var(--border);
+	}
+	.board td {
+		border: none;
+		padding: 0;
+	}
+
+	.hero {
+		padding: 36px 8px 28px;
+	}
+
+	.hero .counter {
+		font-size: clamp(34px, 12vw, 56px);
+		overflow-wrap: anywhere;
+		line-height: 1.1;
+	}
+
+	.stat-grid {
+		grid-template-columns: repeat(2, 1fr);
+	}
+
+	.btn-lg {
+		width: 100%;
+		text-align: center;
+	}
+}
+
+/* Bottom nav for mobile */
+@media (max-width: 720px) {
+	body {
+		padding-bottom: 64px;
+	}
+
+	.nav-bottom {
+		position: fixed;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		z-index: 60;
+		display: flex;
+		justify-content: space-around;
+		align-items: center;
+		height: 56px;
+		background: rgba(10, 10, 10, 0.94);
+		backdrop-filter: blur(12px);
+		border-top: 1px solid var(--border);
+	}
+	.nav-bottom a {
+		flex: 1;
+		text-align: center;
+		font-size: 11px;
+		letter-spacing: 0.04em;
+		color: var(--text-dim);
+		text-decoration: none;
+		padding: 6px 0;
+	}
+	.nav-bottom a.active {
+		color: var(--red);
+	}
+	.nav-bottom a .icon {
+		display: block;
+		margin: 0 auto 2px;
+	}
+}
+
+/* Desktop: bottom nav hidden */
+@media (min-width: 721px) {
+	.nav-bottom {
+		display: none;
+	}
+}
+
+/* Toast positioning for mobile (avoid covering bottom nav) */
+@media (max-width: 720px) {
+	.toast-stack {
+		top: auto;
+		bottom: 64px;
+		justify-content: center;
+	}
+}

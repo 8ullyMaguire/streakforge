@@ -68,11 +68,11 @@ noob_forger, late_night (3 today).
 ```bash
 cd backend
 DATABASE_URL=postgres://streakforge:***@127.0.0.1:5432/streakforge_test \
-  cargo test --test integration        # 13 tests
+  cargo test --test integration        # 17 tests
 
 cd ../web
 npm run check                          # svelte-check
-npx vitest run src/lib/api.test.ts     # targeted file(s) — 33 total
+npx vitest run                         # 47 tests (6 files)
 ```
 
 ---
@@ -251,7 +251,7 @@ Only relevant offline; fonts are cosmetic (fallback stacks in CSS).
 |------|---------|
 | Redeploy after feature | `./scripts/deploy.sh thinkcentre` + secret re-check |
 | Check prod health | see §4 |
-| Add manifesto doc | copy to `manifestos/`, redeploy |
+| Add doctrine doc | copy to `manifestos/`, redeploy |
 | Update docs | edit `docs/*.md`, keep STATUS.md in sync |
 | Push mirror | `git push github main` |
 

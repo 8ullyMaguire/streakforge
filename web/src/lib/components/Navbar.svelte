@@ -3,9 +3,10 @@
 	import { api, ApiRequestError } from '$lib/api';
 	import type { SessionUser } from '$lib/types';
 	import { pushToast } from '$lib/toasts.svelte';
-	import { Flame } from 'lucide-svelte';
+	import { Flame, Lock } from 'lucide-svelte';
 
 	let user = $state<SessionUser | null>(null);
+	let locked = $state(false);
 	let loaded = $state(false);
 
 	$effect(() => {
@@ -26,6 +27,31 @@
 			});
 	});
 
+	// poll lock state when signed in (for the navbar lock badge)
+	$effect(() => {
+		if (!user) return;
+		let stopped = false;
+		api
+			.lockState()
+			.then((l) => {
+				if (!stopped) locked = l.locked;
+			})
+			.catch(() => {});
+		const t = setInterval(() => {
+			if (stopped) return;
+			api
+				.lockState()
+				.then((l) => {
+					if (!stopped) locked = l.locked;
+				})
+				.catch(() => {});
+		}, 30000);
+		return () => {
+			stopped = true;
+			clearInterval(t);
+		};
+	});
+
 	async function logout() {
 		try {
 			await api.logout();
@@ -39,11 +65,12 @@
 	}
 
 	const links = [
-		{ href: '/dashboard', label: 'DASHBOARD' },
+		{ href: '/dashboard', label: 'MY PLACE' },
+		{ href: '/denial', label: 'DENIAL' },
 		{ href: '/drill', label: 'DRILL' },
-		{ href: '/leaderboard', label: 'LEADERBOARD' },
+		{ href: '/leaderboard', label: 'BOARD' },
 		{ href: '/feed', label: 'FEED' },
-		{ href: '/manifesto', label: 'MANIFESTO' }
+		{ href: '/doctrine', label: 'DOCTRINE' }
 	];
 </script>
 
@@ -59,6 +86,9 @@
 		</div>
 		<div class="nav-spacer" />
 		{#if user}
+			{#if locked}
+				<a href="/denial" class="nav-lock-badge" title="You are locked">🔒</a>
+			{/if}
 			<a href="/settings" class="nav-link">{user.username}</a>
 			<button class="btn btn-ghost" onclick={logout}>Log out</button>
 		{:else}
@@ -68,3 +98,15 @@
 </nav>
 
 <slot />
+
+<style>
+	.nav-lock-badge {
+		margin-right: 8px;
+		font-size: 15px;
+		text-decoration: none;
+		opacity: 0.9;
+	}
+	.nav-lock-badge:hover {
+		opacity: 1;
+	}
+</style>

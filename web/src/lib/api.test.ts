@@ -93,10 +93,10 @@ describe('timeAgo', () => {
 });
 
 describe('formatCount', () => {
-	it('pads to 8 digits', () => {
-		expect(formatCount(62)).toBe('00000062');
+	it('pads to 9 digits', () => {
+		expect(formatCount(62)).toBe('000000062');
 	});
 	it('handles large numbers', () => {
-		expect(formatCount(12345678)).toBe('12345678');
+		expect(formatCount(123456789)).toBe('123456789');
 	});
 });

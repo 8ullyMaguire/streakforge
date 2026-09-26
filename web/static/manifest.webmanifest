@@ -1,0 +1,18 @@
+{
+  "name": "StreakForge — Embrace Defeat. The Future Is Black.",
+  "short_name": "StreakForge",
+  "description": "Whiteboi denial & accountability tracker. Lock, deny, drill, waste when permitted.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

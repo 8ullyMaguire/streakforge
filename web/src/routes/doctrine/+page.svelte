@@ -18,7 +18,7 @@
 				await select(docs[0].id);
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load manifesto';
+			error = e instanceof Error ? e.message : 'Failed to load doctrine';
 		}
 	});
 
@@ -40,11 +40,11 @@
 </script>
 
 <svelte:head>
-	<title>Manifesto — StreakForge</title>
+	<title>Doctrine — StreakForge</title>
 </svelte:head>
 
 <div class="container" style="padding-top:28px;">
-	<h1 style="font-size:24px;letter-spacing:0.04em;margin:0 0 4px;">THE MANIFESTO</h1>
+	<h1 style="font-size:24px;letter-spacing:0.04em;margin:0 0 4px;">THE DOCTRINE</h1>
 	<p style="color:var(--text-dim);font-size:14px;margin:0 0 20px;">
 		Doctrine. Commandments. Training. The collected texts.
 	</p>

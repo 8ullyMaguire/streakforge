@@ -9,6 +9,7 @@ pub struct Config {
     pub secure_cookies: bool,
     pub web_build_dir: String,
     pub manifestos_dir: String,
+    pub migrations_dir: String,
 }
 
 impl Config {
@@ -25,6 +26,7 @@ impl Config {
             secure_cookies: env::var("SECURE_COOKIES").map(|v| v == "1").unwrap_or(false),
             web_build_dir: env::var("WEB_BUILD_DIR").unwrap_or_else(|_| "./web/build".into()),
             manifestos_dir: env::var("MANIFESTOS_DIR").unwrap_or_else(|_| "./manifestos".into()),
+            migrations_dir: env::var("MIGRATIONS_DIR").unwrap_or_else(|_| "./migrations".into()),
         }
     }
 }

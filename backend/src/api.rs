@@ -113,10 +113,11 @@ pub struct LeaderboardEntry {
     pub username: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
-    /// weighted points: denial = 10 pts, waste = 1 pt
+    /// weighted points: denial = 10 pts, waste = 1 pt, 3 affirmations = 1 pt
     pub points: i64,
     pub waste_count: i64,
     pub denial_count: i64,
+    pub affirmation_count: i64,
     pub last_log_at: Option<String>,
 }
 
@@ -462,7 +463,7 @@ async fn lock_info(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<LockInfoResp
     .fetch_one(pool)
     .await?;
     let (cur_streak, longest_streak): (i64, i64) = sqlx::query_as(
-        "select current_streak, longest_streak from lock_streak($1)",
+        "select current_streak::bigint, longest_streak::bigint from lock_streak($1)",
     )
     .bind(user_id)
     .fetch_one(pool)
@@ -567,7 +568,7 @@ pub async fn get_leaderboard(
         "alltime" => "alltime",
         _ => return Err(ApiError::bad_request("Unknown period")),
     };
-    let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, i64, i64, i64, Option<OffsetDateTime>)> =
+    let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, i64, i64, i64, i64, Option<OffsetDateTime>)> =
         match period {
             "daily" => sqlx::query_as("select * from daily_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
             "weekly" => sqlx::query_as("select * from weekly_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
@@ -576,7 +577,7 @@ pub async fn get_leaderboard(
     let entries = rows
         .into_iter()
         .enumerate()
-        .map(|(i, (uid, uname, dname, av, points, waste_count, denial_count, last))| LeaderboardEntry {
+        .map(|(i, (uid, uname, dname, av, points, waste_count, denial_count, affirmation_count, last))| LeaderboardEntry {
             rank: (i + 1) as i64,
             user_id: uid,
             username: uname,
@@ -585,6 +586,7 @@ pub async fn get_leaderboard(
             points,
             waste_count,
             denial_count,
+            affirmation_count,
             last_log_at: last
                 .map(|t| t.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()),
         })
@@ -598,13 +600,17 @@ pub async fn get_user_of_the_day(
     let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, i64, OffsetDateTime, i64)> =
         sqlx::query_as(
             "select p.id, p.username, p.display_name, p.avatar_url,
-                    (count(*) filter (where l.kind = 'denial') * 10 + count(*) filter (where l.kind = 'habit'))::bigint as points,
+                    (
+                      count(*) filter (where l.kind = 'denial') * 10
+                      + count(*) filter (where l.kind = 'habit')
+                      + floor(count(*) filter (where l.kind = 'affirmation') / 3)
+                    )::bigint as points,
                     min(l.logged_at) as first_log_at,
-                    (select count(*) from public.habit_logs a where a.user_id = p.id and a.kind in ('habit','denial')) as alltime_count
+                    (select count(*) from public.habit_logs a where a.user_id = p.id and a.kind in ('habit','denial','affirmation')) as alltime_count
              from public.habit_logs l
              join public.profiles p on p.id = l.user_id
-             where l.log_date = (now() at time zone 'utc')::date
-               and l.kind in ('habit', 'denial')
+             where l.logged_at >= now() - interval '24 hours'
+               and l.kind in ('habit', 'denial', 'affirmation')
              group by p.id
              order by points desc, min(l.logged_at) asc
              limit 1",

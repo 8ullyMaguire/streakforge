@@ -30,12 +30,12 @@
 			const res = await api.logHabit(note.trim() || undefined);
 			note = '';
 			onLogged?.(res.stats);
-			pushToast('Completion logged. Forge on.');
+			pushToast('Load wasted. The board remembers.');
 		} catch (e) {
 			if (e instanceof ApiRequestError && e.status === 429) {
 				pushToast(e.message, 'error');
 			} else {
-				pushToast(e instanceof Error ? e.message : 'Failed to log completion', 'error');
+				pushToast(e instanceof Error ? e.message : 'Failed to log', 'error');
 			}
 		} finally {
 			logging = false;
@@ -55,7 +55,7 @@
 		</p>
 	{/if}
 	<textarea
-		placeholder="Optional note (max 140 chars)…"
+		placeholder="Confession (max 140 chars)…"
 		maxlength="140"
 		bind:value={note}
 		style="width:100%;min-height:70px;resize:vertical;"
@@ -64,9 +64,9 @@
 		class="log-btn"
 		onclick={log}
 		disabled={logging || !stats().can_log}
-		aria-label="Log completion"
+		aria-label="Waste a load"
 	>
-		<Zap size={22} style="vertical-align:-3px;" /> LOG COMPLETION
+		<Zap size={22} style="vertical-align:-3px;" /> WASTE A LOAD
 	</button>
 	{#if !stats().can_log && stats().next_allowed_at}
 		<p style="color:var(--text-dim);font-size:12px;text-align:center;margin:0;">

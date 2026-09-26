@@ -1,4 +1,3 @@
-use axum::extract::State;
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::http::Method;
 use axum::response::IntoResponse;
@@ -14,27 +13,8 @@ use tower_http::trace::TraceLayer;
 use tower_sessions::{cookie::time::Duration as CookieDuration, Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
 
-// SPA fallback: serve index.html for any non-API route (client-side routing).
-// Unknown /api/* paths return 404 (a missing endpoint should not masquerade
-// as the SPA shell — this also makes stale route probing fail loudly).
-async fn spa_fallback(
-    State(state): State<AppState>,
-    request: axum::extract::Request,
-) -> impl IntoResponse {
-    if request.uri().path().starts_with("/api/") {
-        return axum::http::StatusCode::NOT_FOUND.into_response();
-    }
-    let path = std::path::Path::new(&state.cfg.web_build_dir).join("index.html");
-    match tokio::fs::read(&path).await {
-        Ok(body) => (
-            axum::http::StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            body,
-        )
-            .into_response(),
-        Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
-    }
-}
+// SPA fallback is handled by fallback_service(ServeDir + index.html fallback)
+// in main(). Unknown /api/* paths return 404 from the API nest itself.
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -48,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cfg = Config::from_env();
     let pool = db::connect(&cfg.database_url).await?;
-    db::run_migrations(&pool).await?;
+    db::run_migrations(&pool, &cfg.migrations_dir).await?;
     tracing::info!("migrations applied");
 
     let session_store = PostgresStore::new(pool.clone());
@@ -98,16 +78,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/feed", get(streakforge_api::api::get_feed))
         .route("/profile/{username}", get(streakforge_api::api::get_profile))
         .route("/profile", patch(streakforge_api::api::update_profile))
-        .route("/manifesto", get(streakforge_api::manifesto::list))
-        .route("/manifesto/{id}", get(streakforge_api::manifesto::get));
+        .route("/doctrine", get(streakforge_api::manifesto::list))
+        .route("/doctrine/{id}", get(streakforge_api::manifesto::get));
 
+    // Serve real static files from the build root (manifest, icons, etc.)
+    // BEFORE the SPA fallback, so PWA assets are served as themselves.
+    // Unknown paths fall back to index.html for client-side routing.
+    let web_dir = cfg.web_build_dir.clone();
+    let static_fallback = tower::service_fn(move |req: axum::extract::Request| {
+        let web_dir = web_dir.clone();
+        async move {
+            // Unknown /api/* paths must 404, not serve the SPA shell (a missing
+            // endpoint should not masquerade as the app; stale probing fails loud).
+            if req.uri().path().starts_with("/api/") {
+                return Ok::<_, std::convert::Infallible>(
+                    axum::http::StatusCode::NOT_FOUND.into_response(),
+                );
+            }
+            let path = std::path::Path::new(&web_dir).join("index.html");
+            let res = match tokio::fs::read(&path).await {
+                Ok(body) => axum::response::Response::new(axum::body::Body::from(body)),
+                Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
+            };
+            Ok::<_, std::convert::Infallible>(res)
+        }
+    });
     let app = Router::new()
         .nest("/api", api_router)
         .nest_service(
             "/_app",
             ServeDir::new(format!("{}/_app", cfg.web_build_dir)),
         )
-        .fallback(spa_fallback)
+        .fallback_service(
+            // Serve real static files from the build root (manifest, icons,
+            // index.html) and fall back to index.html for SPA client routes.
+            ServeDir::new(&cfg.web_build_dir).fallback(static_fallback),
+        )
         .with_state(state)
         .layer(session_layer)
         .layer(cors)

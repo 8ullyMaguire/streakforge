@@ -47,12 +47,25 @@ This document is the full design so you can correct me before I finish the build
   30 days of inactivity. This is the "remember by default" behavior — no
   checkbox needed; it's the default and only mode.
 
-### 1.4 Not yet built (pending review)
-- Frontend re-theme (copy, pages, layout)
-- Typed affirmation drill
-- Mobile-progressive pass
-- Tests for the new backend endpoints/migration
-- Deployment
+### 1.4 Resolved decisions (your corrections, applied)
+- **Denial rate limit**: 1 denial per **24h**, and a denial is **blocked if a
+  waste (habit log) was submitted in the same 24h window**. A whiteboi who cums
+  cannot claim a denial that day.
+- **Weighted leaderboard**: denial counts **10×** a waste (1 pt per habit log,
+  10 pts per denial). Affirmations also count: **3 affirmations = 1 pt**
+  (like a wasted load). Leaderboard + UOTD rank by weighted points; UI shows
+  waste/denial/affirmation breakdown per row and the formula.
+- **Drill gate affirmations**: the required typed affirmations before cumming
+  include **"I'm racist"** and **"I submit!"** (`GATE_AFFIRMATION` +
+  `DECLINE_LABEL`/`SUBMIT_LABEL` in affirmations.ts).
+- **Favicon**: black spade ♠️ (BNWO symbol), not the black heart.
+
+### 1.5 Not yet built (pending review)
+- Frontend re-theme (copy, pages, layout) — **done in this pass** (see §2)
+- Typed affirmation drill — **done**
+- Mobile-progressive pass — **done**
+- Tests for the new backend endpoints/migration — **done** (17 backend, 47 frontend)
+- Deployment — **pending**
 
 ---
 
@@ -134,7 +147,7 @@ dashboard stat-grid squeezes, hero text is huge, tables are wide. Plan:
 | Concept | Kind | Where shown | Rate limit |
 |---|---|---|---|
 | Loads Wasted | `habit` | hero counter (existing) | 1/hr, 5/day |
-| Loads Denied | `denial` | hero second counter + denial page | 1/hr, 5/day |
+| Loads Denied | `denial` | hero second counter + denial page | **1/24h, and blocked if a waste was logged in the same 24h** |
 | Affirmation reps | `affirmation` | drill page | 1/hr, 5/day |
 
 - The "loads wasted" counter keeps counting existing `habit` logs (nothing

@@ -589,8 +589,8 @@ async fn weighted_leaderboard_denial_dominates(pool: PgPool) {
         .await
         .unwrap();
 
-    let rows: Vec<(uuid::Uuid, i64, i64, i64)> =
-        sqlx::query_as("select user_id, points, waste_count, denial_count from daily_leaderboard_weighted(10)")
+    let rows: Vec<(uuid::Uuid, i64, i64, i64, i64)> =
+        sqlx::query_as("select user_id, points, waste_count, denial_count, affirmation_count from daily_leaderboard_weighted(10)")
             .fetch_all(&pool)
             .await
             .unwrap();
@@ -599,8 +599,86 @@ async fn weighted_leaderboard_denial_dominates(pool: PgPool) {
     assert_eq!(rows[0].1, 10);
     assert_eq!(rows[0].2, 0);
     assert_eq!(rows[0].3, 1);
+    assert_eq!(rows[0].4, 0);
     assert_eq!(rows[1].0, a);
     assert_eq!(rows[1].1, 1);
+    assert_eq!(rows[1].4, 0);
+
+    // C: 3 affirmations = 1 point (like a waste). 6 affs = 2 pts.
+    let c = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('driller_lead') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for _ in 0..3 {
+        sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'affirmation')")
+            .bind(c)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let c_row: (uuid::Uuid, i64, i64, i64, i64) = sqlx::query_as(
+        "select user_id, points, waste_count, denial_count, affirmation_count from daily_leaderboard_weighted(10) where user_id = $1",
+    )
+    .bind(c)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(c_row.1, 1); // 3 affirmations = 1 point
+    assert_eq!(c_row.4, 3);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn daily_uses_rolling_24h_window(pool: PgPool) {
+    // A log 12 hours ago is NOT "today" UTC anymore, but MUST appear on the
+    // daily board (rolling 24h). A log 3 days ago must NOT appear on daily
+    // but SHOULD appear on weekly (rolling 7 days).
+    let recent = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('recent_logger') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let old = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('week_logger') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, logged_at) values ($1, 'habit', now() - interval '12 hours')",
+    )
+    .bind(recent)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, logged_at) values ($1, 'habit', now() - interval '3 days')",
+    )
+    .bind(old)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let daily_rows: Vec<(uuid::Uuid, i64)> =
+        sqlx::query_as("select user_id, points from daily_leaderboard_weighted(10)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let daily_ids: Vec<uuid::Uuid> = daily_rows.iter().map(|r| r.0).collect();
+    assert!(daily_ids.contains(&recent), "12h-old log must appear on daily");
+    assert!(!daily_ids.contains(&old), "3d-old log must NOT appear on daily");
+
+    let weekly_rows: Vec<(uuid::Uuid, i64)> =
+        sqlx::query_as("select user_id, points from weekly_leaderboard_weighted(10)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let weekly_ids: Vec<uuid::Uuid> = weekly_rows.iter().map(|r| r.0).collect();
+    assert!(weekly_ids.contains(&old), "3d-old log must appear on weekly");
+    assert!(weekly_ids.contains(&recent), "12h-old log must appear on weekly");
 }
 
 #[sqlx::test(migrations = "./migrations")]
