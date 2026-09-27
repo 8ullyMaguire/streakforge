@@ -103,6 +103,30 @@ function inline(s: string): string {
 			return `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
 		}
 	);
+	// Bare URLs, on text that is not already inside a link.
+	//
+	// Most of the doctrine docs write "Full guide: https://..." rather than
+	// "[Full guide](https://...)". Without this they render as inert text: the
+	// URL is visible but not clickable, which reads as a broken link.
+	//
+	// The incoming text is ALREADY html-escaped (every caller runs escapeHtml
+	// first), so `&` is `&amp;` and `"` is `&quot;` on the way in. Escaping the
+	// captured URL a second time would produce `&amp;amp;` and `&amp;quot;`,
+	// which corrupts every query string and makes `&quot;` visible in the
+	// href. The captured text is therefore emitted as-is; it is already safe,
+	// and a raw `"` could not have survived the first pass.
+	//
+	// Only http/https (and bare www, promoted to https) are matched, so a
+	// `javascript:` or `data:` URL can never become an anchor. Trailing
+	// sentence punctuation is excluded so "see https://x.com/a." keeps its
+	// period outside the link.
+	s = s.replace(
+		/(^|[\s(>])((?:https?:\/\/|www\.)[^\s<>()[\]]+[^\s<>()[\].,;:!?'"])/g,
+		(m, pre: string, url: string) => {
+			const href = url.startsWith('www.') ? `https://${url}` : url;
+			return `${pre}<a href="${href}" target="_blank" rel="noopener">${url}</a>`;
+		}
+	);
 	// bold **text**
 	s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 	// italic *text* (avoid colliding with bold)

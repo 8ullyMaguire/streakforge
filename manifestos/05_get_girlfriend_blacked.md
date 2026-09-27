@@ -138,9 +138,9 @@ While watching, make some comments about how hot it is to see BLACK cock in whit
 
 Feedback This step is self-evident and most men know this intuitively and apply it however there is a crucial point he made here that I can corroborate. I was talking with the hot GF from Field Report One (Conversion) via email at one point and she asked me for videos and pics of me with any other women. She stated that the pics I had with a brunette where similar to her hair style and body type and she wanted to see more of those pics as they had turned her on and she was able to visualize herself with a Black Bull or me. So get IR porn of women that resemble your wife/GF so she can do as Olympic athletes are taught to use Imagery and "visualize the outcome" they want to see. To picture themselves performing at their top peak and holding the Gold medal in their hand. When you can visualize yourself doing something it gets the subconscious mind activated to make the conscious thoughts to happen which leads to your body following behind it and next thing you know you have willed something into existence from the mental into the physical dimension. You can read more about Olympic Athlete mental training at these links below:  
 
-[http://www.huffingtonpost.com/2014/02/11/mind-hacks-from-olympic-a\_n\_4747755.html](http://www.huffingtonpost.com/2014/02/11/mind-hacks-from-olympic-a_n_4747755.html)  
+[Huffington Post: Olympic athletes' mental-training hacks](https://www.huffingtonpost.com/2014/02/11/mind-hacks-from-olympic-a_n_4747755.html)  
 
-[http://www.nytimes.com/2014/02/23/sports/olympics/olympians-use-imagery-as-mental-training.html?\_r=0](http://www.nytimes.com/2014/02/23/sports/olympics/olympians-use-imagery-as-mental-training.html?_r=0)  
+[The New York Times: Olympians use imagery as mental training](https://www.nytimes.com/2014/02/23/sports/olympics/olympians-use-imagery-as-mental-training.html?_r=0)  
 
 &#x200B;  
 

@@ -1,5 +1,3 @@
-# Organizing for BNWO: A Guide to Collective Action
-
 BNWO stays a private kink for most people until enough of us coordinate. Individual lockups and porn habits matter, but visible spaces, shared resources, and consistent pressure move the needle further. This is about practical steps, not LARPing some overnight takeover. Focus on what works, stay discreet, and keep everything consensual and legal.
 
 ## Online first

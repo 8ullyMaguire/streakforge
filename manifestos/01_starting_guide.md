@@ -1,6 +1,6 @@
 Welcome to the BNWO community. This is a practical overview of the main guides, resources, and projects people use here.
 
-### How to Be a Good Whiteboi
+## How to Be a Good Whiteboi
 
 Long guide covering politics, social behavior, porn, masturbation, orgasms, chastity, sex, and feminization. Written by someone who's been in the community a while. Useful whether you're just starting or already deep into it.
 
@@ -16,13 +16,13 @@ Main ideas:
 
 Full guide: https://fedinsfw.app/c/bnwo/p/260619/how-to-be-a-good-whiteboi-a-guide
 
-### StreakForge
+## StreakForge
 
 Simple streak tracker built for whiteboys. Log daily completions (whatever tasks or routines you're working on), keep your streak going, and climb the leaderboard.
 
 Link: https://streakforge.polarisocial.xyz/
 
-### BlackRep (BNWO Dating App)
+## BlackRep (BNWO Dating App)
 
 BlackRep is a dating and social app built for white women and Black men who want to live the BNWO lifestyle. It's not a general dating app.
 
@@ -36,7 +36,7 @@ Status: Still in development. Looking for developers, testers, and others who wa
 Development thread: https://fedinsfw.app/c/bnwo/p/456031/blackrep-bnwo-dating-app
 Comment there if you're interested. Share the project if you want it to grow.
 
-### How to Get Your Partner BLACKED
+## How to Get Your Partner BLACKED
 
 For men who want a BBC-only cuckold relationship. Practical steps for introducing the idea without forcing it.
 
@@ -46,7 +46,7 @@ Links:
 - https://fedinsfw.app/c/bnwo/p/260677/how-to-get-your-partner-blacked-a-guide
 - https://fedinsfw.app/c/bnwo/p/260696/how-to-get-your-girlfriend-or-wife-blacked-a-guide-for-whitebois
 
-### Organizing for BNWO
+## Organizing for BNWO
 
 Strategic guide for whiteboys who want to push the movement beyond individual kink. Covers digital infrastructure, physical meetup spaces, cultural influence, and longer-term institutions.
 
@@ -54,26 +54,26 @@ Topics include centralized communication and resource sharing, "seed city" plans
 
 Guide: https://fedinsfw.app/c/bnwo/p/456169/organizing-for-bnwo-a-guide-to-collective-action
 
-### Whiteboi Affirmations
+## Whiteboi Affirmations
 
 Short daily affirmations meant to reinforce the role: purpose, femininity, obedience, service to Black men, and lifelong pussy-free celibacy.
 
 Bluesky thread: https://bsky.app/profile/steeltitan.bsky.social/post/3m6yps7rhqs2f
 
-### Commandments for Whitebois in the BNWO Faith
+## Commandments for Whitebois in the BNWO Faith
 
 Principles for full dedication: commitment to Black supremacy, respect for Black men and women, chastity / staying pussy-free, social/sexual/financial/masochistic reparations, and encouraging a wife to get Black-bred while raising the children with care.
 
 Post: https://fedinsfw.app/c/bnwo/p/391495/10-1-commandments-for-whitebois-in-the-bnwo-faith
 
-### Plapping Guide
+## Plapping Guide
 
 Instructions and tips for striking the testicles for sexual pleasure, from beginner to more experienced.
 
 - https://fedinsfw.app/c/bnwo/p/408881/plapping-guide
 - https://fedinsfw.app/c/bnwo/p/408894/plapping-inspiration
 
-### How to Become a Premature Ejaculator
+## How to Become a Premature Ejaculator
 
 Training methods to condition yourself to cum quickly as a way of reinforcing inadequacy relative to Black men.
 
@@ -81,19 +81,19 @@ Techniques include the one-finger method, trigger conditioning with progressivel
 
 Guide: https://fedinsfw.app/c/bnwo/p/408901/become-a-premature-ejaculator
 
-### Share the Best Fantasies About the BNWO
+## Share the Best Fantasies About the BNWO
 
 Community thread for posting and reading favorite BNWO scenarios (cuckolding, worship, service, etc.). Good for inspiration and discussion.
 
 Thread: https://fedinsfw.app/c/bnwo/p/408902/share-the-best-fantasies-about-the-bnwo
 
-### BNWO Communities and Resources
+## BNWO Communities and Resources
 
 Directory of forums, subreddits, social groups, content creators, educational material, and basic privacy advice for engaging with the scene.
 
 Directory: https://fedinsfw.app/c/bnwo/p/408903/bnwo-communities-resources
 
-### BNWO in Media, Pop Culture, and Public Gatherings
+## BNWO in Media, Pop Culture, and Public Gatherings
 
 Examples of Black superiority / interracial dynamics in movies, TV, music, celebrity relationships, social media, events, and historical context.
 
@@ -101,13 +101,13 @@ Examples of Black superiority / interracial dynamics in movies, TV, music, celeb
 - https://fedinsfw.app/c/bnwo/p/456095/bnwo-in-media-pop-culture-public-gatherings-etc
 - https://fedinsfw.app/c/bnwo/p/456094/list-of-examples-of-bnwo-in-mainstream-media
 
-### 10 Phone Settings Every Whiteboy Should Change
+## 10 Phone Settings Every Whiteboy Should Change
 
 Practical privacy, content filter, notification, app, and security adjustments that make it easier to engage with BNWO content without leaking activity.
 
 Guide: https://fedinsfw.app/c/bnwo/p/456042/10-settings-every-whiteboy-should-change-on-their-phone-right-now
 
-### Curated BNWO Links & Creators
+## Curated BNWO Links & Creators
 
 Hand-picked profiles, platforms, and artists.
 
