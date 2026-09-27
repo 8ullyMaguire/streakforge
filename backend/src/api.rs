@@ -152,11 +152,10 @@ pub struct LeaderboardEntry {
     /// active exclusive streak (most recent WLW or WLD) and which kind it is
     pub streak: i64,
     pub active_kind: String,
-    /// legacy flat points, retained for the profile/feed shapes that use it
-    pub points: i64,
-    pub waste_count: i64,
+    /// Legacy mirror of `wld`; the 💧 badge on both board pages reads it.
+    /// `points` / `waste_count` / `affirmation_count` were dropped with the
+    /// 10x weighting they encoded — nothing in the frontend read them.
     pub denial_count: i64,
-    pub affirmation_count: i64,
     pub last_log_at: Option<String>,
 }
 
@@ -645,26 +644,52 @@ pub async fn get_leaderboard(
         "alltime" => "alltime",
         _ => return Err(ApiError::bad_request("Unknown period")),
     };
-    // The Devotion Index function returns (score, wlw, wld, game_bonus,
-    // multiplier, streak, active_kind, last_log_at). The flat `points` and the
-    // per-kind counts are derived here for the profile/feed compatibility fields.
+    // Order must match COLS below exactly:
+    //   identity | score, wlw, wld, game_bonus, multiplier | streak, kind, last | penalty
     type Row = (
         uuid::Uuid, String, Option<String>, Option<String>,   // identity
-        f64, i64, i64, i64, f64, f64,                        // score + components
+        f64, i64, i64, i64, f64,                              // score + components
         i64, String, Option<OffsetDateTime>,                 // streak, kind, last
+        f64,                                                 // racism_penalty (always 0)
     );
-    let rows: Vec<Row> = match period {
-        "daily" => sqlx::query_as("select * from daily_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
-        "weekly" => sqlx::query_as("select * from weekly_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
-        "monthly" => sqlx::query_as("select * from monthly_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
-        _ => sqlx::query_as("select * from alltime_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
+    // Column list is explicit rather than `select *`: the leaderboard functions
+    // return `score` and `multiplier` as SQL `numeric` (exact arithmetic, and
+    // `round(...,2)` needs it), which sqlx cannot decode into f64. `select *`
+    // therefore 500s at runtime. Cast at the SQL boundary instead of adding a
+    // decimal dependency to the crate.
+    //
+    // The board function does NOT return racism_penalty (only devotion_index
+    // does), so it is filled with the literal 0 it always evaluates to.
+    let rows: Vec<Row> = {
+        const COLS: &str = "user_id, username, display_name, avatar_url, \
+             score::float8, wlw::bigint, wld::bigint, game_bonus::bigint, \
+             multiplier::float8, streak::bigint, active_kind, last_log_at";
+        let q = |fn_name: &str| {
+            format!(
+                "select {COLS}, 0::float8 from {fn_name}"
+            )
+        };
+        match period {
+            "daily" => sqlx::query_as(&q("daily_leaderboard_weighted(50)"))
+                .fetch_all(&state.pool)
+                .await?,
+            "weekly" => sqlx::query_as(&q("weekly_leaderboard_weighted(50)"))
+                .fetch_all(&state.pool)
+                .await?,
+            "monthly" => sqlx::query_as(&q("monthly_leaderboard_weighted(50)"))
+                .fetch_all(&state.pool)
+                .await?,
+            // Default when no period is given: the monthly board.
+            _ => sqlx::query_as(&q("alltime_leaderboard_weighted(50)"))
+                .fetch_all(&state.pool)
+                .await?,
+        }
     };
     let entries = rows
         .into_iter()
         .enumerate()
-        .map(|(i, (uid, uname, dname, av, score, wlw, wld, game_bonus, mult, penalty, streak, kind, last))| {
-            // flat points kept for the legacy field: denial 10, waste 1, 3 affs 1
-            let points = wld * 10 + wlw;
+        .map(
+            |(i, (uid, uname, dname, av, score, wlw, wld, game_bonus, mult, streak, kind, last, penalty))| {
             LeaderboardEntry {
                 rank: (i + 1) as i64,
                 user_id: uid,
@@ -679,14 +704,14 @@ pub async fn get_leaderboard(
                 racism_penalty: penalty,
                 streak,
                 active_kind: kind,
-                points,
-                waste_count: wlw,
+                // Legacy mirror of wld, kept because both board pages render a
+                // 💧 badge from it. The authoritative field is `wld`.
                 denial_count: wld,
-                affirmation_count: game_bonus * 3,
                 last_log_at: last
                     .map(|t| t.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()),
             }
-        })
+        },
+        )
         .collect();
     Ok(Json(LeaderboardResponse { period: period.into(), entries }))
 }

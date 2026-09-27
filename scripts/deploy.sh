@@ -34,16 +34,30 @@ rsync -az --delete "$ROOT/manifestos" "$HOST:$DEPLOY_DIR/"
 rsync -az --delete "$ROOT/web/build/" "$HOST:$WWW_DIR/"
 
 echo "==> 4/6 Writing .env (PRESERVE existing remote secrets)"
-# The remote .env (SESSION_SECRET + DB password) lives on /personal. Copy it to
-# /opt so systemd's EnvironmentFile is on local disk too (a wedged NFS at boot
-# would otherwise fail the whole unit). Never overwrite with hardcoded values.
-# Also ensure MIGRATIONS_DIR is set (relative ./migrations would break under
-# the new /opt WorkingDirectory).
-ssh "$HOST" "if [ -f $DEPLOY_DIR/.env ]; then
-  cp -n $DEPLOY_DIR/.env $BIN_DIR/.env && echo 'preserved .env -> /opt';
-  grep -q '^MIGRATIONS_DIR=' $BIN_DIR/.env || echo 'MIGRATIONS_DIR=$DEPLOY_DIR/migrations' >> $BIN_DIR/.env;
-  echo 'MIGRATIONS_DIR set:'; grep '^MIGRATIONS_DIR=' $BIN_DIR/.env;
-else echo 'MISSING .env on remote!'; fi"
+# Secrets live in the remote .env and are never written here. Only the two
+# non-secret PATH settings below are managed, and they are REWRITTEN (not just
+# appended when absent): the legacy values pointed at an NFS path
+# (/personal/...) that no longer resolves, so the binary silently started with
+# no migrations to apply and the Devotion Index never deployed. Appending-if-
+# missing could not catch that, so the deploy now asserts the paths exist.
+ssh "$HOST" "set -e
+  if [ ! -f $BIN_DIR/.env ]; then
+    echo 'FATAL: no .env at $BIN_DIR/.env' >&2; exit 1
+  fi
+  sudo sed -i 's|^MIGRATIONS_DIR=.*|MIGRATIONS_DIR=$DEPLOY_DIR/migrations|' $BIN_DIR/.env
+  sudo sed -i 's|^MANIFESTOS_DIR=.*|MANIFESTOS_DIR=$DEPLOY_DIR/manifestos|' $BIN_DIR/.env
+  grep -q '^MIGRATIONS_DIR=' $BIN_DIR/.env || echo 'MIGRATIONS_DIR=$DEPLOY_DIR/migrations' | sudo tee -a $BIN_DIR/.env
+  grep -q '^MANIFESTOS_DIR=' $BIN_DIR/.env || echo 'MANIFESTOS_DIR=$DEPLOY_DIR/manifestos' | sudo tee -a $BIN_DIR/.env
+  grep -E '^(MIGRATIONS_DIR|MANIFESTOS_DIR)=' $BIN_DIR/.env"
+
+echo "==> 4b/6 Verifying every configured path exists on the remote"
+# A .env value pointing at a directory that is not there is an outage that only
+# shows up as a 500 much later, so fail the deploy here instead.
+ssh "$HOST" "set -e
+  for d in $DEPLOY_DIR/migrations $DEPLOY_DIR/manifestos $WWW_DIR; do
+    if [ ! -d \"\$d\" ]; then echo \"FATAL: missing dir \$d\" >&2; exit 1; fi
+    echo \"ok \$d\"
+  done"
 
 echo "==> 5/6 Installing systemd service"
 ssh "$HOST" "sudo tee /etc/systemd/system/streakforge.service >/dev/null" <<'UNIT'
@@ -72,4 +86,29 @@ echo "==> 6/6 Installing nginx site (port 8001) — SKIPPED: backend serves stat
 echo "==> Enabling + starting"
 ssh "$HOST" "sudo systemctl daemon-reload && sudo systemctl enable streakforge && sudo systemctl restart streakforge"
 
-echo "==> Done. Verify: curl http://127.0.0.1:8001/"
+# The deploy used to print "Done" after a successful restart, which reported
+# success while every API route 500'd. Assert the endpoints the frontend
+# actually calls, and fail loudly if any of them do.
+echo "==> Health check"
+HEALTH_FAIL=0
+# NOTE: /leaderboard/{period} has no bare form, and /feed takes a ?cursor
+# query — so "/api/leaderboard" and "/api/feed/0" are 404s by design, not
+# faults. These paths mirror what web/src/lib/api.ts actually requests.
+for path in "/" "/api/total" "/api/leaderboard/monthly" "/api/leaderboard/alltime" \
+            "/api/user-of-the-day" "/api/feed" "/api/doctrine"; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' "https://streakforge.polarisocial.xyz$path")
+  if [ "$code" = "200" ]; then
+    echo "  ok   $path ($code)"
+  else
+    echo "  FAIL $path ($code)"
+    HEALTH_FAIL=1
+  fi
+done
+if [ "$HEALTH_FAIL" -ne 0 ]; then
+  echo "FATAL: health check failed — the deploy did NOT land cleanly." >&2
+  echo "Recent service log:" >&2
+  ssh "$HOST" "sudo journalctl -u streakforge -n 30 --no-pager" >&2
+  exit 1
+fi
+
+echo "==> Done. All endpoints healthy."

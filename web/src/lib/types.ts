@@ -42,11 +42,10 @@ export interface LeaderboardEntry {
 	/** active exclusive streak (the most recent WLW or WLD) and which kind it is */
 	streak: number;
 	active_kind: string;
-	/** legacy flat points, retained for compatibility */
-	points: number;
-	waste_count: number;
+	/** legacy mirror of `wld`; the 💧 badge on both board pages reads it.
+	 *  `points` / `waste_count` / `affirmation_count` went away with the 10x
+	 *  weighting they encoded. */
 	denial_count: number;
-	affirmation_count: number;
 	last_log_at: string | null;
 }
 
