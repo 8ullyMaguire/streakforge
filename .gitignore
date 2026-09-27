@@ -1,19 +1,17 @@
-# Dependencies
-node_modules/
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
-env/
+# Rust
 target/
-build/
-dist/
+backend/target/
+**/*.rs.bk
+
+# Node / Svelte
+node_modules/
+web/node_modules/
+web/build/
+web/.svelte-kit/
+npm-debug.log*
 *.egg-info/
-# Cargo.lock is committed for the binary crate (backend/), so builds are
-# reproducible. It is already tracked; this line is only here to catch a
-# library or scratch crate added later.
-!backend/Cargo.lock
+# web/package-lock.json is deliberately NOT ignored: it is tracked, and an
+# ignore rule for a tracked file only creates the illusion that it is ignored.
 
 # Environment and secrets
 .env
@@ -27,24 +25,16 @@ secrets.*
 *.cert
 *.p12
 
-# IDE
-.vscode/
-.idea/
+# Editor and swap files
+*~
 *.swp
 *.swo
-*~
-.DS_Store
-Thumbs.db
+.idea/
+.vscode/
 
 # Logs
 *.log
 
-# Backup
-*.bak/
-*.old/
-*.bak.*/
-
-# SvelteKit
-.svelte-kit/
-web/.svelte-kit/
-
+# OS
+.DS_Store
+Thumbs.db
