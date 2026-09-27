@@ -2,6 +2,7 @@
 	import { api, ApiRequestError, formatCount } from '$lib/api';
 	import type { DenialResponse } from '$lib/types';
 	import { pushToast } from '$lib/toasts.svelte';
+	import { remainingSecs, formatCountdown } from '$lib/countdown';
 	import { onMount } from 'svelte';
 	import { Lock, Unlock, Ban, Crown } from 'lucide-svelte';
 
@@ -10,6 +11,16 @@
 	let acting = $state(false);
 	let unlockReason = $state('self');
 	let now = $state(Date.now());
+	// When the current /api/denial payload arrived, so the server-supplied
+	// remaining seconds tick down instead of being recomputed from the browser
+	// clock (which may disagree with the server's).
+	let receivedAt = $state(Date.now());
+
+	// Ticks once a second; `now` drives the lock timer as it always did, and
+	// also re-derives the denial countdown below.
+	let denialRemaining = $derived(
+		remainingSecs(data?.next_denial_allowed_in ?? 0, now - receivedAt)
+	);
 
 	onMount(() => {
 		load();
@@ -24,6 +35,7 @@
 	async function load() {
 		try {
 			data = await api.denial();
+			receivedAt = Date.now();
 		} catch (e) {
 			if (e instanceof ApiRequestError && e.status === 401) {
 				window.location.href = '/login';
@@ -176,14 +188,26 @@
 			<button
 				class="btn btn-red btn-lg"
 				onclick={reportDenial}
-				disabled={acting || !!data.next_denial_allowed_in}
+				disabled={acting || denialRemaining > 0}
 			>
 				<Ban size={18} /> {acting ? 'LOGGING…' : 'I DENIED'}
 			</button>
-			{#if data.next_denial_allowed_in}
-				<p style="color:var(--text-dim);font-size:12px;margin-top:10px;">
-					Next denial reportable in {fmtDuration(data.next_denial_allowed_in)}
-				</p>
+			{#if denialRemaining > 0}
+				<div style="margin-top:10px;">
+					<div
+						style="font-family:var(--font-mono);font-size:22px;letter-spacing:0.08em;color:var(--text);"
+						aria-label="Time until your next denial can be reported"
+					>
+						{formatCountdown(denialRemaining)}
+					</div>
+					<p style="color:var(--text-dim);font-size:12px;margin:2px 0 0;">
+						{#if data.stats.blocked_by_exclusivity}
+							WLWs and WLDs are mutually exclusive — a waste today blocks the denial.
+						{:else}
+							Next denial reportable at 00:00 UTC
+						{/if}
+					</p>
+				</div>
 			{/if}
 		</div>
 

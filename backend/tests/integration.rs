@@ -564,8 +564,15 @@ async fn denial_kind_separated_and_streak(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn weighted_leaderboard_denial_dominates(pool: PgPool) {
-    // A: 1 waste. B: 1 denial. Denial = 10 pts, waste = 1 pt -> B ranks first.
+async fn streak_beats_a_single_log_on_the_board(pool: PgPool) {
+    // Under the Devotion Index a WLW and a WLD are worth the SAME (1 point each)
+    // and are mutually exclusive, so neither outranks the other. What outranks
+    // a single log is a STREAK: the multiplier. B logs 7 unbroken days, so
+    // 7 x 1.25 = 8.75 and B leads A's single 1.0x log.
+    //
+    // (This test used to assert the old "denial = 10x waste" weighting, which
+    // 0008 replaced. Mutually exclusive streaks make a 10x per-denial bonus
+    // self-contradictory: you could never hold both.)
     let a = sqlx::query_scalar::<_, uuid::Uuid>(
         "insert into profiles (username) values ('waster') returning id",
     )
@@ -578,55 +585,69 @@ async fn weighted_leaderboard_denial_dominates(pool: PgPool) {
     .fetch_one(&pool)
     .await
     .unwrap();
+
     sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'habit')")
         .bind(a)
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'denial')")
-        .bind(b)
-        .execute(&pool)
-        .await
-        .unwrap();
+    for g in 0..7 {
+        log_on_day(&pool, b, "denial", g).await;
+    }
 
-    let rows: Vec<(uuid::Uuid, i64, i64, i64, i64)> =
-        sqlx::query_as("select user_id, points, waste_count, denial_count, affirmation_count from daily_leaderboard_weighted(10)")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
+    let rows: Vec<(uuid::Uuid, f64, i64, i64, i64, f64)> = sqlx::query_as(
+        "select user_id, score::float8, wlw::bigint, wld::bigint, game_bonus::bigint,
+                multiplier::float8
+         from monthly_leaderboard_weighted(10)",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].0, b); // denial (10 pts) beats waste (1 pt)
-    assert_eq!(rows[0].1, 10);
-    assert_eq!(rows[0].2, 0);
-    assert_eq!(rows[0].3, 1);
-    assert_eq!(rows[0].4, 0);
-    assert_eq!(rows[1].0, a);
-    assert_eq!(rows[1].1, 1);
-    assert_eq!(rows[1].4, 0);
+    assert_eq!(rows[0].0, b, "the 7-day streak outranks a single log");
+    assert!((rows[0].1 - 8.75).abs() < 1e-9, "B score={}", rows[0].1);
+    assert_eq!(rows[0].2, 0, "B has no WLWs");
+    assert_eq!(rows[0].3, 7, "B has seven WLDs");
+    assert!((rows[0].5 - 1.25).abs() < 1e-9, "B multiplier={}", rows[0].5);
 
-    // C: 3 affirmations = 1 point (like a waste). 6 affs = 2 pts.
+    assert_eq!(rows[1].0, a);
+    assert!((rows[1].1 - 1.0).abs() < 1e-9, "A score={}", rows[1].1);
+    assert_eq!(rows[1].2, 1, "A has one WLW");
+    assert_eq!(rows[1].3, 0);
+    assert_eq!(rows[1].4, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn three_affirmations_count_as_one_game_bonus(pool: PgPool) {
+    // Affirmations are not WLWs or WLDs, so they never touch a streak. They
+    // feed "Game Bonus" instead, at 1 point per 3 reps: 3 reps = 1, 6 = 2.
+    // This is also why affirmations get their own daily budget — a strict
+    // 1/day would make the 3-reps-per-point rule unreachable.
     let c = sqlx::query_scalar::<_, uuid::Uuid>(
         "insert into profiles (username) values ('driller_lead') returning id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+
     for _ in 0..3 {
-        sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'affirmation')")
-            .bind(c)
-            .execute(&pool)
-            .await
-            .unwrap();
+        log_on_day(&pool, c, "affirmation", 0).await;
     }
-    let c_row: (uuid::Uuid, i64, i64, i64, i64) = sqlx::query_as(
-        "select user_id, points, waste_count, denial_count, affirmation_count from daily_leaderboard_weighted(10) where user_id = $1",
+
+    let (score, wlw, wld, game_bonus): (f64, i64, i64, i64) = sqlx::query_as(
+        "select score::float8, wlw::bigint, wld::bigint, game_bonus::bigint
+         from daily_leaderboard_weighted(10) where user_id = $1",
     )
     .bind(c)
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(c_row.1, 1); // 3 affirmations = 1 point
-    assert_eq!(c_row.4, 3);
+
+    assert_eq!(wlw, 0, "affirmations are not WLWs");
+    assert_eq!(wld, 0, "affirmations are not WLDs");
+    assert_eq!(game_bonus, 1, "3 affirmations = 1 game bonus");
+    assert!((score - 1.0).abs() < 1e-9, "score={score}");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -662,21 +683,27 @@ async fn daily_uses_rolling_24h_window(pool: PgPool) {
     .await
     .unwrap();
 
-    let daily_rows: Vec<(uuid::Uuid, i64)> =
-        sqlx::query_as("select user_id, points from daily_leaderboard_weighted(10)")
+    // The board column is `score` since 0008; these two tests only care about
+    // window MEMBERSHIP, so they select just the id and leave the value alone.
+    let daily_ids: Vec<uuid::Uuid> =
+        sqlx::query_as::<_, (uuid::Uuid,)>("select user_id from daily_leaderboard_weighted(10)")
             .fetch_all(&pool)
             .await
-            .unwrap();
-    let daily_ids: Vec<uuid::Uuid> = daily_rows.iter().map(|r| r.0).collect();
+            .unwrap()
+            .into_iter()
+            .map(|r| r.0)
+            .collect();
     assert!(daily_ids.contains(&recent), "12h-old log must appear on daily");
     assert!(!daily_ids.contains(&old), "3d-old log must NOT appear on daily");
 
-    let weekly_rows: Vec<(uuid::Uuid, i64)> =
-        sqlx::query_as("select user_id, points from weekly_leaderboard_weighted(10)")
+    let weekly_ids: Vec<uuid::Uuid> =
+        sqlx::query_as::<_, (uuid::Uuid,)>("select user_id from weekly_leaderboard_weighted(10)")
             .fetch_all(&pool)
             .await
-            .unwrap();
-    let weekly_ids: Vec<uuid::Uuid> = weekly_rows.iter().map(|r| r.0).collect();
+            .unwrap()
+            .into_iter()
+            .map(|r| r.0)
+            .collect();
     assert!(weekly_ids.contains(&old), "3d-old log must appear on weekly");
     assert!(weekly_ids.contains(&recent), "12h-old log must appear on weekly");
 }
@@ -791,4 +818,263 @@ async fn lock_total_time_counts(pool: PgPool) {
     // 1 day closed + 1 day current = 2 days total; longest single = 1 day (both are ~1 day)
     assert!(total_secs >= 2 * 86400 - 120, "total_secs={total_secs}");
     assert!(longest_secs <= 1 * 86400 + 120, "longest_secs={longest_secs}");
+}
+
+// ---------------------------------------------------------------------------
+// Daily (UTC) cadence — the rule that replaced the previous rolling-24h limit.
+//
+// These assert check_rate_limits directly. The HTTP layer is thin over it, and
+// the failure mode this guards against is silent: with a 24h rolling window a
+// user logging at 23:50 is locked until 23:50 next day, which reads as "the
+// button is broken" rather than an error.
+// ---------------------------------------------------------------------------
+
+use streakforge_api::api::{check_rate_limits, next_utc_midnight, LogKind};
+use time::OffsetDateTime;
+
+/// Insert a log for `uid` on the UTC day `days_ago` days back, at 12:00 UTC.
+/// Noon keeps every case clear of the midnight boundary.
+async fn log_on_day(pool: &PgPool, uid: uuid::Uuid, kind: &str, days_ago: i32) {
+    // `kind` is a text column guarded by a CHECK constraint, not an enum type.
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, logged_at)
+         values ($1, $2,
+                 (((now() at time zone 'utc')::date - ($3 || ' days')::interval
+                   + interval '12 hours')::timestamptz))",
+    )
+    .bind(uid)
+    .bind(kind)
+    .bind(days_ago)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn first_log_of_the_day_is_allowed(pool: PgPool) {
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('daily_ok') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert!(check_rate_limits(&pool, uid, LogKind::Habit).await.is_ok());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn second_log_same_utc_day_is_rejected(pool: PgPool) {
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('daily_dup') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    log_on_day(&pool, uid, "habit", 0).await;
+
+    let err = check_rate_limits(&pool, uid, LogKind::Habit)
+        .await
+        .expect_err("a second WLW on the same UTC day must be rejected");
+    assert_eq!(err.status, 429, "expected 429, got {err:?}");
+
+    // The message must name the next allowed time, otherwise the user is told
+    // only "come back tomorrow" with no clock to wait for.
+    let msg = err.message.clone();
+    assert!(msg.contains("UTC"), "message should mention UTC: {msg}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_log_yesterday_no_longer_blocks_today(pool: PgPool) {
+    // This is the regression that the 24h rolling window failed: a log at 23:50
+    // yesterday must not lock the user out until 23:50 today. The calendar-day
+    // rule keys off log_date, so a prior-day log never blocks today.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('daily_roll') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    log_on_day(&pool, uid, "habit", 1).await;
+
+    assert!(
+        check_rate_limits(&pool, uid, LogKind::Habit).await.is_ok(),
+        "yesterday's log must not block today"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn wlw_and_wld_are_mutually_exclusive(pool: PgPool) {
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('daily_excl') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    log_on_day(&pool, uid, "habit", 0).await;
+    assert_eq!(
+        check_rate_limits(&pool, uid, LogKind::Denial)
+            .await
+            .expect_err("a denial after a waste today must be rejected")
+            .status,
+        429
+    );
+
+    // and the reverse
+    let uid2 = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('daily_excl2') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    log_on_day(&pool, uid2, "denial", 0).await;
+    assert_eq!(
+        check_rate_limits(&pool, uid2, LogKind::Habit)
+            .await
+            .expect_err("a waste after a denial today must be rejected")
+            .status,
+        429
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn affirmations_keep_their_own_budget(pool: PgPool) {
+    // Affirmations are neither WLW nor WLD, so the 1/day cadence must not apply
+    // to them — the drill would be unusable. But they must not be unlimited
+    // either, and five is the documented daily ceiling.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('daily_aff') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for _ in 0..5 {
+        assert!(
+            check_rate_limits(&pool, uid, LogKind::Affirmation).await.is_ok(),
+            "first five reps of the day must be allowed"
+        );
+        log_on_day(&pool, uid, "affirmation", 0).await;
+    }
+
+    assert_eq!(
+        check_rate_limits(&pool, uid, LogKind::Affirmation)
+            .await
+            .expect_err("the sixth rep must be rejected")
+            .status,
+        429
+    );
+
+    // An exhaustion of reps must not block a WLW, and a WLW must not be
+    // blocked by reps: they share a day but not a budget.
+    assert!(check_rate_limits(&pool, uid, LogKind::Habit).await.is_ok());
+}
+
+#[test]
+fn next_midnight_is_always_tomorrow_midnight_utc() {
+    let cases = [
+        "2026-01-31T23:59:59Z",
+        "2026-01-01T00:00:00Z",
+        "2026-12-31T12:00:00Z",
+    ];
+    for c in cases {
+        let now = OffsetDateTime::parse(c, &time::format_description::well_known::Rfc3339).unwrap();
+        let next = next_utc_midnight(now);
+        assert_eq!(next.date(), now.date() + time::Duration::days(1), "for {c}");
+        assert_eq!(next.hour(), 0, "for {c}");
+        assert_eq!(next.minute(), 0, "for {c}");
+        assert_eq!(next.second(), 0, "for {c}");
+        assert!(next > now, "next midnight must be in the future for {c}");
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn devotion_index_uses_the_tier_multiplier(pool: PgPool) {
+    // 7 unbroken UTC days of WLW -> streak 7 -> 1.25x -> 7 * 1.25 = 8.75.
+    // g = 0 is today, so the chain is unbroken.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('dev_tier') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for g in 0..7 {
+        log_on_day(&pool, uid, "habit", g).await;
+    }
+
+    let (wlw, wld, game_bonus, multiplier, score): (i64, i64, i64, f64, f64) = sqlx::query_as(
+        "select wlw::bigint, wld::bigint, game_bonus::bigint,
+                multiplier::float8, score::float8
+         from devotion_index($1, now() - interval '30 days')",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(wlw, 7, "seven WLWs in the window");
+    assert_eq!(wld, 0);
+    assert_eq!(game_bonus, 0);
+    assert!((multiplier - 1.25).abs() < 1e-9, "multiplier={multiplier}");
+    assert!((score - 8.75).abs() < 1e-9, "score={score}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn devotion_index_streak_resets_after_a_missed_day(pool: PgPool) {
+    // Days 0 and 1 are logged, day 2 is missed, day 3 is logged. The active
+    // streak is 1 (today only), so the multiplier drops back to 1.0 even though
+    // three logs sit in the window.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('dev_reset') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for g in [0, 1, 3] {
+        log_on_day(&pool, uid, "habit", g).await;
+    }
+
+    let (wlw, multiplier, score): (i64, f64, f64) = sqlx::query_as(
+        "select wlw::bigint, multiplier::float8, score::float8
+         from devotion_index($1, now() - interval '30 days')",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(wlw, 3, "three WLWs in the window");
+    assert!((multiplier - 1.0).abs() < 1e-9, "multiplier={multiplier}");
+    // 3 logs x 1.0 = 3: the multiplier follows the ACTIVE streak, not the total.
+    assert!((score - 3.0).abs() < 1e-9, "score={score}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn monthly_leaderboard_is_the_default_period(pool: PgPool) {
+    // The board defaults to monthly. With no period given, the handler must
+    // apply the 30-day window — a log 10 days old is in scope, one 40 days old
+    // is not.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('lb_default') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    log_on_day(&pool, uid, "habit", 10).await;
+    log_on_day(&pool, uid, "habit", 40).await;
+
+    let (wlw_default,): (i64,) = sqlx::query_as(
+        "select wlw::bigint from devotion_index($1, now() - interval '30 days')",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(wlw_default, 1, "only the 10-day-old log is inside the month");
 }

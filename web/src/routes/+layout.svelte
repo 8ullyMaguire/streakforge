@@ -14,8 +14,11 @@
 
 <footer class="footer">
 	<div class="container">
-		STREAKFORGE — EMBRACE DEFEAT. THE FUTURE IS BLACK.
-		<span style="margin:0 8px;">·</span>
-		<a href="/app" style="color:var(--text-dim);text-decoration:underline;text-underline-offset:3px;">Install the app</a>
+		<!-- PWA install is a real conversion path (manifest + icons ship), so it
+		     gets a visible button rather than only a small underlined link. -->
+		<a href="/app" class="btn btn-ghost" style="margin-bottom:12px;">INSTALL THE APP</a>
+		<div style="color:var(--text-dim);font-size:12px;letter-spacing:0.06em;">
+			STREAKFORGE — EMBRACE DEFEAT. THE FUTURE IS BLACK.
+		</div>
 	</div>
 </footer>

@@ -4,9 +4,13 @@
 	import { pushToast } from '$lib/toasts.svelte';
 	import { AFFIRMATIONS } from '$lib/affirmations';
 	import { matchesAffirmation, affirmationSimilarity } from '$lib/typo';
+	import { remainingSecs, formatCountdown } from '$lib/countdown';
 	import { onMount } from 'svelte';
 	import StreakCalendar from '$lib/components/StreakCalendar.svelte';
 	import { Repeat, ChevronRight } from 'lucide-svelte';
+
+	/** Affirmation reps per day. Mirrors DAILY_LIMIT in backend/src/api.rs. */
+	const DAILY_LIMIT = 5;
 
 	let stats = $state<Stats | null>(null);
 	let error = $state<string | null>(null);
@@ -16,17 +20,35 @@
 	let matched = $derived(matchesAffirmation(typed, AFFIRMATIONS[index].text));
 	let similarity = $derived(affirmationSimilarity(typed, AFFIRMATIONS[index].text));
 
-	onMount(async () => {
-		try {
-			const res = await api.drill();
-			stats = res.stats;
-		} catch (e) {
-			if (e instanceof ApiRequestError && e.status === 401) {
-				window.location.href = '/login';
-				return;
+	// Ticks the rep countdown down from the server's remaining seconds, so it
+	// moves without a reload and the REPEAT button re-enables at midnight UTC.
+	let now = $state(Date.now());
+	let receivedAt = $state(Date.now());
+	let drillRemaining = $derived(
+		remainingSecs(stats?.next_allowed_in_secs ?? 0, now - receivedAt)
+	);
+
+	onMount(() => {
+		// onMount is synchronous here: the interval starts immediately and the
+		// fetch runs in the background, so the ticker is never gated on the
+		// request and the cleanup closure is actually returned.
+		const t = setInterval(() => {
+			now = Date.now();
+		}, 1000);
+		(async () => {
+			try {
+				const res = await api.drill();
+				stats = res.stats;
+				receivedAt = Date.now();
+			} catch (e) {
+				if (e instanceof ApiRequestError && e.status === 401) {
+					window.location.href = '/login';
+					return;
+				}
+				error = e instanceof Error ? e.message : 'Failed to load drill';
 			}
-			error = e instanceof Error ? e.message : 'Failed to load drill';
-		}
+		})();
+		return () => clearInterval(t);
 	});
 
 	function next() {
@@ -177,10 +199,18 @@
 					<ChevronRight size={16} />
 				</button>
 			</div>
-			{#if !stats.can_log && stats.next_allowed_at}
-				<p style="color:var(--text-dim);font-size:12px;margin-top:10px;">
-					Next rep allowed {timeUntil(stats.next_allowed_at)}
-				</p>
+			{#if !stats.can_log && stats.next_allowed_in_secs > 0}
+				<div style="text-align:center;margin-top:10px;">
+					<div
+						style="font-family:var(--font-mono);font-size:20px;letter-spacing:0.08em;color:var(--text);"
+						aria-label="Time until your next rep is allowed"
+					>
+						{formatCountdown(drillRemaining)}
+					</div>
+					<p style="color:var(--text-dim);font-size:12px;margin:2px 0 0;">
+						Next rep allowed at 00:00 UTC · {DAILY_LIMIT} reps per day
+					</p>
+				</div>
 			{/if}
 		</div>
 

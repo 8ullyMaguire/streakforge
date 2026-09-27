@@ -7,28 +7,32 @@
 
 	let total = $state<number | null>(null);
 	let denied = $state<number | null>(null);
-	let daily = $state<Leaderboard | null>(null);
+	let monthly = $state<Leaderboard | null>(null);
 	let uotd = $state<UserOfTheDay | null>(null);
 	let recentFeed = $state<FeedItem[]>([]);
 	let loaded = $state(false);
 	let signedIn = $state(false);
 
 	onMount(async () => {
-		try {
-			const [uotdRes, dailyRes, feedRes, totalRes] = await Promise.all([
-				api.userOfTheDay(),
-				api.leaderboard('daily'),
-				api.feed('0'),
-				fetch('/api/total').then((r) => r.json())
-			]);
-			uotd = uotdRes;
-			daily = dailyRes;
-			recentFeed = feedRes.items.slice(0, 8);
-			total = totalRes.total;
-			denied = totalRes.denied ?? 0;
-		} catch {
-			// tolerate partial failure — page still renders
+		// allSettled, NOT all: the comment below used to claim partial failure was
+		// tolerated, but Promise.all rejects on the FIRST failure, so a single
+		// failing endpoint blanked the counters, the board and the feed at once.
+		// Each panel is independent; one being down must not take the page with it.
+		const [uotdRes, dailyRes, feedRes, totalRes] = await Promise.allSettled([
+			api.userOfTheDay(),
+			api.leaderboard('monthly'),
+			api.feed('0'),
+			fetch('/api/total').then((r) => r.json())
+		]);
+
+		if (uotdRes.status === 'fulfilled' && uotdRes.value) uotd = uotdRes.value;
+		if (dailyRes.status === 'fulfilled') monthly = dailyRes.value;
+		if (feedRes.status === 'fulfilled') recentFeed = feedRes.value.items.slice(0, 8);
+		if (totalRes.status === 'fulfilled' && totalRes.value) {
+			total = totalRes.value.total;
+			denied = totalRes.value.denied ?? 0;
 		}
+
 		// check auth to decide the primary CTA
 		api
 			.me()
@@ -48,6 +52,11 @@
 		if (i < 3) return 'digit-red';
 		if (i >= len - 3) return 'digit-green';
 		return 'digit-black';
+	}
+
+	// A score of 8.75 should not render as "8.7500000001" or "9".
+	function fmtScore(n: number): string {
+		return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 	}
 </script>
 
@@ -112,7 +121,10 @@
 			<div class="crown">👑</div>
 			<div>WHITEBOI OF THE DAY</div>
 			<div class="handle">{uotd.username}</div>
-			<div class="count">{uotd.points} points · 24h</div>
+			<div class="count">
+				{uotd.points}
+				{uotd.points === 1 ? 'point' : 'points'} · 24h
+			</div>
 			<div class="sub">
 				{#if uotd.display_name}{uotd.display_name} · {/if}
 				first log {timeAgo(uotd.first_log_at)} · {uotd.alltime_count} all-time
@@ -122,21 +134,25 @@
 {/if}
 
 <div class="container">
-	{#if daily}
-		<h2 style="font-size:18px;letter-spacing:0.08em;margin:20px 0 12px;">
+	{#if monthly}
+		<h2 style="font-size:18px;letter-spacing:0.08em;margin:20px 0 4px;">
 			WHITEBOIS WHO KNOW THEIR PLACE
 		</h2>
+		<p style="color:var(--text-dim);font-size:11px;letter-spacing:0.06em;margin:0 0 12px;text-align:center;">
+			WHITEBOI DEVOTION INDEX · MONTHLY (ROLLING 30 DAYS)
+		</p>
 		<div class="card" style="padding:0;overflow:hidden;">
 			<table class="board">
 				<thead>
 					<tr>
-						<th style="width:48px;">#</th>
+						<th style="width:44px;">#</th>
 						<th>WHITEBOI</th>
-						<th style="text-align:right;">POINTS</th>
+						<th style="text-align:right;">SCORE</th>
+						<th style="text-align:right;">STREAK</th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each daily.entries.slice(0, 25) as e}
+					{#each monthly.entries.slice(0, 25) as e}
 						<tr>
 							<td class="rank" class:rank-top1={e.rank === 1} class:rank-top2={e.rank === 2} class:rank-top3={e.rank === 3}>
 								{e.rank}
@@ -147,14 +163,21 @@
 									<span class="denial-badge" title="{e.denial_count} denials">💧{e.denial_count}</span>
 								{/if}
 							</td>
-							<td class="count">{e.points}</td>
+							<td class="count">{fmtScore(e.score)}</td>
+							<td style="text-align:right;font-size:12px;white-space:nowrap;">
+								{e.streak}d
+								{#if e.multiplier !== 1}
+									<span style="color:var(--gold);">×{fmtScore(e.multiplier)}</span>
+								{/if}
+							</td>
 						</tr>
 					{/each}
 				</tbody>
 			</table>
 		</div>
 		<p style="color:var(--text-dim);font-size:12px;margin-top:10px;text-align:center;">
-			Denial counts 10× a waste. Three affirmations = one wasted load. The board rewards denial, not waste.
+			Score = (WLW + WLD + Game Bonus) × streak multiplier. The board rewards
+			<span style="color:var(--text);">devotion</span>, not volume.
 		</p>
 	{/if}
 

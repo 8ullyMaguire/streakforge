@@ -1,7 +1,11 @@
 // API handlers — logging (rate-limited), stats, leaderboards, feed, profiles.
-// Rate limits (server-enforced):
-//   - max 1 log per 60 minutes per user
-//   - max 5 logs per UTC calendar day per user
+// Rate limits (server-enforced), all keyed on the UTC calendar day so they
+// agree with user_streak_kind and with the Devotion Index multiplier:
+//   - max 1 log per UTC day per user, per kind (habit / affirmation / denial)
+//   - a waste (habit) and a denial (WLD) are mutually exclusive on the same day:
+//     recording one invalidates the other's eligibility that day
+//   - DAILY_LIMIT is retained only as a backstop against accidental duplicates;
+//     the cadence is the 1-per-UTC-day rule above.
 
 use crate::auth::SessionUser;
 use crate::error::{ApiError, ApiResult};
@@ -15,11 +19,11 @@ use std::collections::HashMap;
 use time::OffsetDateTime;
 use tower_sessions::Session;
 
-pub const HOURLY_LIMIT: i64 = 1;
 pub const DAILY_LIMIT: i64 = 5;
-/// Denial rate limit: one denial per 24h, and only if no waste (habit log)
-/// was logged in the same 24h window.
-pub const DENIAL_WINDOW_HOURS: i64 = 24;
+/// Cadence: one submission per UTC calendar day, per kind.
+/// Matches user_streak_kind (UTC-day streaks) and the Devotion Index
+/// multiplier, so "submit once a day to grow your streak" is literally true.
+pub const DAILY_WINDOW_HOURS: i64 = 24;
 
 // ---- Helpers ----
 
@@ -93,6 +97,30 @@ pub struct StatsResponse {
     pub last_60m: i64,
     pub can_log: bool,
     pub next_allowed_at: Option<String>,
+    /// Seconds until the daily cadence resets (next UTC midnight).
+    /// 0 when allowed now. The UI ticks this down locally so the countdown
+    /// advances without a reload.
+    pub next_allowed_in_secs: i64,
+    /// True when today's submission is blocked because the OTHER exclusive kind
+    /// already ran (a waste blocks a denial, a denial blocks a waste).
+    pub blocked_by_exclusivity: bool,
+    /// Whiteboi Devotion Index for this user (all-time), decomposed.
+    pub devotion: DevotionIndexResponse,
+}
+
+/// Score = ((WLW + WLD + Game Bonus) x Score Multiplier) - Racism Penalty.
+/// `racism_penalty` is always 0 today: there is no reporting data source for it.
+#[derive(Debug, Serialize, Clone)]
+pub struct DevotionIndexResponse {
+    pub wlw: i64,
+    pub wld: i64,
+    pub game_bonus: i64,
+    pub multiplier: f64,
+    pub racism_penalty: f64,
+    pub score: f64,
+    /// Streak of the currently active exclusive kind (the most recent WLW or WLD).
+    pub active_kind: String,
+    pub active_streak: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -113,7 +141,18 @@ pub struct LeaderboardEntry {
     pub username: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
-    /// weighted points: denial = 10 pts, waste = 1 pt, 3 affirmations = 1 pt
+    /// Whiteboi Devotion Index for the window: ((WLW + WLD + Game Bonus) x mult) - penalty
+    pub score: f64,
+    /// components, so the board can show how a score was reached
+    pub wlw: i64,
+    pub wld: i64,
+    pub game_bonus: i64,
+    pub multiplier: f64,
+    pub racism_penalty: f64,
+    /// active exclusive streak (most recent WLW or WLD) and which kind it is
+    pub streak: i64,
+    pub active_kind: String,
+    /// legacy flat points, retained for the profile/feed shapes that use it
     pub points: i64,
     pub waste_count: i64,
     pub denial_count: i64,
@@ -203,62 +242,68 @@ pub fn parse_kind(s: Option<&str>) -> LogKind {
     }
 }
 
-async fn check_rate_limits(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> ApiResult<()> {
-    let now = OffsetDateTime::now_utc();
-    let hour_ago = now - time::Duration::minutes(60);
-    let today_start = now.date();
-    let today_start_dt = today_start.midnight().assume_utc();
+/// Next UTC midnight — the boundary the daily cadence resets on.
+/// Countdowns are computed against this so the UI and the server agree.
+pub fn next_utc_midnight(now: OffsetDateTime) -> OffsetDateTime {
+    (now.date() + time::Duration::days(1)).midnight().assume_utc()
+}
 
-    // Denial has its own rule: 1 per 24h, AND no waste (habit log) in the same 24h.
-    if kind == LogKind::Denial {
-        let day_ago = now - time::Duration::hours(DENIAL_WINDOW_HOURS);
-        let (denials_24h, wastes_24h): (i64, i64) = sqlx::query_as(
-            "select
-               (select count(*) from habit_logs where user_id = $1 and kind = 'denial' and logged_at >= $2),
-               (select count(*) from habit_logs where user_id = $1 and kind = 'habit' and logged_at >= $2)",
-        )
+/// Enforce the daily (UTC) cadence. `pub` so integration tests can assert the
+/// rule directly instead of only inferring it from an HTTP response.
+pub async fn check_rate_limits(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+    kind: LogKind,
+) -> ApiResult<()> {
+    let now = OffsetDateTime::now_utc();
+    let today_start = now.date().midnight().assume_utc();
+
+    // Counts for the current UTC day, per kind.
+    let (habits_today, denials_today, kind_today): (i64, i64, i64) = sqlx::query_as(
+        "select
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit'  and log_date = $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = 'denial' and log_date = $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = $3        and log_date = $2)",
+    )
         .bind(user_id)
-        .bind(day_ago)
+        .bind(today_start.date())
+        .bind(kind.as_str())
         .fetch_one(pool)
         .await?;
-        if denials_24h >= 1 {
-            let next = day_ago + time::Duration::hours(DENIAL_WINDOW_HOURS);
-            let msg = format!(
-                "One denial per 24 hours. You can deny again at {}.",
-                next.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()
-            );
-            return Err(ApiError::too_many_requests(msg));
-        }
-        if wastes_24h >= 1 {
-            return Err(ApiError::too_many_requests(
-                "You wasted a load in the last 24 hours. A whiteboi who cums cannot claim a denial. Come back tomorrow.",
-            ));
-        }
-        return Ok(());
+
+    let next = next_utc_midnight(now);
+    let next_str = next
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default();
+
+    // WLWs and WLDs are mutually exclusive: recording a waste today makes a
+    // denial today ineligible, and vice versa. Enforced as a hard block, since
+    // the Devotion Index treats the two streaks as competing.
+    if kind == LogKind::Denial && habits_today >= 1 {
+        return Err(ApiError::too_many_requests(
+            "You already recorded a load wasted today. WLWs and WLDs are mutually exclusive — a whiteboi who cums cannot claim a denial. Come back tomorrow.",
+        ));
+    }
+    if kind == LogKind::Habit && denials_today >= 1 {
+        return Err(ApiError::too_many_requests(
+            "You already recorded a denial today. WLWs and WLDs are mutually exclusive — a denial day stands. Come back tomorrow.",
+        ));
     }
 
-    let (last_60m, today_count): (i64, i64) = sqlx::query_as(
-        "select
-           (select count(*) from habit_logs where user_id = $1 and kind = $4 and logged_at >= $2),
-           (select count(*) from habit_logs where user_id = $1 and kind = $4 and logged_at >= $3)",
-    )
-    .bind(user_id)
-    .bind(hour_ago)
-    .bind(today_start_dt)
-    .bind(kind.as_str())
-    .fetch_one(pool)
-    .await?;
-
-    if last_60m >= HOURLY_LIMIT {
-        // when can they log again? next full hour boundary
-        let next = hour_ago + time::Duration::minutes(60);
-        let msg = format!(
-            "Hourly limit reached (1 per hour). You can log again at {}.",
-            next.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()
-        );
-        return Err(ApiError::too_many_requests(msg));
+    // One submission per UTC day for WLW/WLD. This is the cadence that grows a
+    // streak, so it is the primary rule.
+    //
+    // Affirmations are exempt: the drill keeps its own budget (see DAILY_LIMIT
+    // below) precisely so reps neither consume nor pollute the WLW/WLD
+    // allowance, and a strict 1/day would gut it.
+    if kind != LogKind::Affirmation && kind_today >= 1 {
+        return Err(ApiError::too_many_requests(format!(
+            "Already recorded a {} today. Submit once a day (UTC) to grow your streak — you can again at {}.",
+            kind.as_str(),
+            next_str
+        )));
     }
-    if today_count >= DAILY_LIMIT {
+    if kind == LogKind::Affirmation && kind_today >= DAILY_LIMIT {
         return Err(ApiError::too_many_requests(format!(
             "Daily limit reached ({} per day). Come back tomorrow.",
             DAILY_LIMIT
@@ -267,17 +312,9 @@ async fn check_rate_limits(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) ->
     Ok(())
 }
 
-fn next_allowed_at(today_count: i64, last_60m: i64) -> Option<String> {
-    if last_60m >= HOURLY_LIMIT {
-        let next = OffsetDateTime::now_utc() + time::Duration::minutes(60);
-        Some(
-            next.format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default(),
-        )
-    } else if today_count >= DAILY_LIMIT {
-        let next = (OffsetDateTime::now_utc().date() + time::Duration::days(1))
-            .midnight()
-            .assume_utc();
+fn next_allowed_at(kind_today: i64) -> Option<String> {
+    if kind_today >= 1 {
+        let next = next_utc_midnight(OffsetDateTime::now_utc());
         Some(
             next.format(&time::format_description::well_known::Rfc3339)
                 .unwrap_or_default(),
@@ -291,44 +328,22 @@ fn next_allowed_at(today_count: i64, last_60m: i64) -> Option<String> {
 /// Returns seconds from now, or None if they can deny right now.
 async fn denial_next_allowed(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<Option<i64>> {
     let now = OffsetDateTime::now_utc();
-    let day_ago = now - time::Duration::hours(DENIAL_WINDOW_HOURS);
-    let (denials_24h, wastes_24h): (i64, i64) = sqlx::query_as(
+    let today = now.date();
+
+    // One denial per UTC calendar day: the next opportunity is the next midnight.
+    let (denials_today, wastes_today): (i64, i64) = sqlx::query_as(
         "select
-           (select count(*) from habit_logs where user_id = $1 and kind = 'denial' and logged_at >= $2),
-           (select count(*) from habit_logs where user_id = $1 and kind = 'habit' and logged_at >= $2)",
+           (select count(*) from habit_logs where user_id = $1 and kind = 'denial' and log_date = $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit'  and log_date = $2)",
     )
     .bind(user_id)
-    .bind(day_ago)
+    .bind(today)
     .fetch_one(pool)
     .await?;
-    if denials_24h >= 1 {
-        // next allowed = 24h after the most recent denial
-        let last: Option<OffsetDateTime> = sqlx::query_scalar(
-            "select max(logged_at) from habit_logs where user_id = $1 and kind = 'denial'",
-        )
-        .bind(user_id)
-        .fetch_one(pool)
-        .await?;
-        if let Some(last) = last {
-            let next = last + time::Duration::hours(DENIAL_WINDOW_HOURS);
-            let secs = (next - now).whole_seconds().max(0);
-            return Ok(Some(secs));
-        }
-        return Ok(Some(DENIAL_WINDOW_HOURS * 3600));
-    }
-    if wastes_24h >= 1 {
-        let last: Option<OffsetDateTime> = sqlx::query_scalar(
-            "select max(logged_at) from habit_logs where user_id = $1 and kind = 'habit'",
-        )
-        .bind(user_id)
-        .fetch_one(pool)
-        .await?;
-        if let Some(last) = last {
-            let next = last + time::Duration::hours(DENIAL_WINDOW_HOURS);
-            let secs = (next - now).whole_seconds().max(0);
-            return Ok(Some(secs));
-        }
-        return Ok(Some(DENIAL_WINDOW_HOURS * 3600));
+
+    if denials_today >= 1 || wastes_today >= 1 {
+        let secs = (next_utc_midnight(now) - now).whole_seconds().max(0);
+        return Ok(Some(secs));
     }
     Ok(None)
 }
@@ -537,7 +552,56 @@ async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> Api
     })
     .collect();
 
-    let can_log = last_60m < HOURLY_LIMIT && today_count < DAILY_LIMIT;
+    let (habits_today, denials_today, kind_today): (i64, i64, i64) = sqlx::query_as(
+        "select
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit'  and log_date = $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = 'denial' and log_date = $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = $3        and log_date = $2)",
+    )
+    .bind(user_id)
+    .bind(today_start.date())
+    .bind(kind.as_str())
+    .fetch_one(pool)
+    .await?;
+
+    // WLWs and WLDs are mutually exclusive. An affirmation is neither, so it is
+    // never blocked by exclusivity and never blocks anything.
+    let blocked_by_exclusivity = match kind {
+        LogKind::Habit => denials_today >= 1,
+        LogKind::Denial => habits_today >= 1,
+        LogKind::Affirmation => false,
+    };
+
+    // Mirrors check_rate_limits exactly: affirmations have their own budget and
+    // are not subject to the 1-per-UTC-day cadence.
+    let can_log = match kind {
+        LogKind::Affirmation => kind_today < DAILY_LIMIT,
+        _ => kind_today < 1 && !blocked_by_exclusivity,
+    };
+    // Seconds until the next UTC midnight. The UI ticks this down client-side,
+    // so the countdown moves without a reload and flips can_log at zero.
+    let next_in_secs = if can_log {
+        0
+    } else {
+        (next_utc_midnight(now) - now).whole_seconds().max(0)
+    };
+
+    // Whiteboi Devotion Index (all-time) for this user.
+    let (wlw, wld, game_bonus, mult, penalty, score): (i64, i64, i64, f64, f64, f64) = sqlx::query_as(
+        "select wlw::bigint, wld::bigint, game_bonus::bigint,
+                multiplier::float8, racism_penalty::float8, score::float8
+         from devotion_index_alltime($1)",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    let (active_kind, active_streak): (String, i64) = sqlx::query_as(
+        "select active_kind::text, streak::bigint from exclusive_streak($1)",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+
     Ok(StatsResponse {
         today_count,
         current_streak,
@@ -547,7 +611,19 @@ async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> Api
         recent_logs: recent,
         last_60m,
         can_log,
-        next_allowed_at: if can_log { None } else { next_allowed_at(today_count, last_60m) },
+        next_allowed_at: if can_log { None } else { next_allowed_at(kind_today) },
+        next_allowed_in_secs: next_in_secs,
+        blocked_by_exclusivity,
+        devotion: DevotionIndexResponse {
+            wlw,
+            wld,
+            game_bonus,
+            multiplier: mult,
+            racism_penalty: penalty,
+            score,
+            active_kind,
+            active_streak,
+        },
     })
 }
 
@@ -565,30 +641,51 @@ pub async fn get_leaderboard(
     let period = match period.as_str() {
         "daily" => "daily",
         "weekly" => "weekly",
+        "monthly" => "monthly",
         "alltime" => "alltime",
         _ => return Err(ApiError::bad_request("Unknown period")),
     };
-    let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, i64, i64, i64, i64, Option<OffsetDateTime>)> =
-        match period {
-            "daily" => sqlx::query_as("select * from daily_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
-            "weekly" => sqlx::query_as("select * from weekly_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
-            _ => sqlx::query_as("select * from alltime_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
-        };
+    // The Devotion Index function returns (score, wlw, wld, game_bonus,
+    // multiplier, streak, active_kind, last_log_at). The flat `points` and the
+    // per-kind counts are derived here for the profile/feed compatibility fields.
+    type Row = (
+        uuid::Uuid, String, Option<String>, Option<String>,   // identity
+        f64, i64, i64, i64, f64, f64,                        // score + components
+        i64, String, Option<OffsetDateTime>,                 // streak, kind, last
+    );
+    let rows: Vec<Row> = match period {
+        "daily" => sqlx::query_as("select * from daily_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
+        "weekly" => sqlx::query_as("select * from weekly_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
+        "monthly" => sqlx::query_as("select * from monthly_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
+        _ => sqlx::query_as("select * from alltime_leaderboard_weighted(50)").fetch_all(&state.pool).await?,
+    };
     let entries = rows
         .into_iter()
         .enumerate()
-        .map(|(i, (uid, uname, dname, av, points, waste_count, denial_count, affirmation_count, last))| LeaderboardEntry {
-            rank: (i + 1) as i64,
-            user_id: uid,
-            username: uname,
-            display_name: dname,
-            avatar_url: av,
-            points,
-            waste_count,
-            denial_count,
-            affirmation_count,
-            last_log_at: last
-                .map(|t| t.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()),
+        .map(|(i, (uid, uname, dname, av, score, wlw, wld, game_bonus, mult, penalty, streak, kind, last))| {
+            // flat points kept for the legacy field: denial 10, waste 1, 3 affs 1
+            let points = wld * 10 + wlw;
+            LeaderboardEntry {
+                rank: (i + 1) as i64,
+                user_id: uid,
+                username: uname,
+                display_name: dname,
+                avatar_url: av,
+                score,
+                wlw,
+                wld,
+                game_bonus,
+                multiplier: mult,
+                racism_penalty: penalty,
+                streak,
+                active_kind: kind,
+                points,
+                waste_count: wlw,
+                denial_count: wld,
+                affirmation_count: game_bonus * 3,
+                last_log_at: last
+                    .map(|t| t.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()),
+            }
         })
         .collect();
     Ok(Json(LeaderboardResponse { period: period.into(), entries }))

@@ -45,6 +45,11 @@
 		// 0 = none, 1 = streak active, 2 = streak broken (missed yesterday)
 		return '1';
 	}
+
+	// A score of 8.75 should not render as "8.7500000001" or "9".
+	function fmtScore(n: number): string {
+		return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+	}
 </script>
 
 <svelte:head>
@@ -61,8 +66,44 @@
 			KNOW YOUR PLACE
 		</h1>
 		<p style="color:var(--text-dim);font-size:14px;margin:0 0 20px;">
-			Waste only when permitted. One per hour. Five per day. Denial outranks everything.
+			One submission per day (UTC). Miss a day and the streak resets. A denial and a waste
+			are mutually exclusive.
 		</p>
+
+		<!-- Whiteboi Devotion Index -->
+		<div class="card" style="margin-bottom:20px;">
+			<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
+				<div>
+					<div style="font-size:11px;letter-spacing:0.1em;color:var(--text-dim);">
+						WHITEBOI DEVOTION INDEX
+					</div>
+					<div
+						style="font-family:var(--font-mono);font-size:38px;line-height:1.1;color:var(--gold);"
+					>
+						{fmtScore(stats.devotion.score)}
+					</div>
+				</div>
+				<div style="text-align:right;font-size:12px;color:var(--text-dim);">
+					<div>
+						{#if stats.devotion.active_kind === 'denial'}WLD{:else if stats.devotion.active_kind === 'habit'}WLW{:else}—{/if}
+						streak <span style="color:var(--text);">{stats.devotion.active_streak}d</span>
+					</div>
+					{#if stats.devotion.multiplier !== 1}
+						<div>multiplier <span style="color:var(--gold);">×{fmtScore(stats.devotion.multiplier)}</span></div>
+					{/if}
+				</div>
+			</div>
+			<div
+				style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--text-dim);"
+			>
+				<span>💦 {stats.devotion.wlw} WLW</span>
+				<span>💧 {stats.devotion.wld} WLD</span>
+				<span>✊ {stats.devotion.game_bonus} bonus</span>
+				<span style="color:var(--text-dim);">
+					= ({stats.devotion.wlw} + {stats.devotion.wld} + {stats.devotion.game_bonus}) × {fmtScore(stats.devotion.multiplier)}
+				</span>
+			</div>
+		</div>
 
 		<div class="stat-grid" style="margin-bottom:20px;">
 			<div class="stat-card">

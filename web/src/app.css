@@ -3,11 +3,11 @@
 
 :root {
 	--bg: #0a0a0a;
-	--bg-elev: #121212;
-	--bg-card: #161616;
-	--border: #262626;
+	--bg-elev: #141414;
+	--bg-card: #1a1a1a;
+	--border: #303030;
 	--text: #f0f0f0;
-	--text-dim: #9aa0a6;
+	--text-dim: #a8aeb4;
 	--red: #e31c23;
 	--red-soft: #c41e1e;
 	--gold: #d4a017;
@@ -228,7 +228,9 @@ textarea:focus {
 	border-top: 1px solid var(--border);
 	border-bottom: 1px solid var(--border);
 	background: var(--bg-elev);
-	mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
+	/* Wider edge fade: at 4% the mask clipped text only a few pixels in, which
+	   read as a broken overflow rather than a deliberate marquee edge. */
+	mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
 }
 .marquee-track {
 	display: flex;

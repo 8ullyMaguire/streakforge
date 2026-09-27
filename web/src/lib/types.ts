@@ -31,6 +31,18 @@ export interface LeaderboardEntry {
 	username: string;
 	display_name: string | null;
 	avatar_url: string | null;
+	/** Whiteboi Devotion Index: ((WLW + WLD + Game Bonus) x multiplier) - penalty */
+	score: number;
+	/** components, so a score can be explained on the board */
+	wlw: number;
+	wld: number;
+	game_bonus: number;
+	multiplier: number;
+	racism_penalty: number;
+	/** active exclusive streak (the most recent WLW or WLD) and which kind it is */
+	streak: number;
+	active_kind: string;
+	/** legacy flat points, retained for compatibility */
 	points: number;
 	waste_count: number;
 	denial_count: number;
@@ -48,6 +60,19 @@ export interface FeedItem {
 	note: string | null;
 }
 
+export interface DevotionIndex {
+	wlw: number;
+	wld: number;
+	game_bonus: number;
+	multiplier: number;
+	/** always 0 today: no reporting data source exists for it */
+	racism_penalty: number;
+	score: number;
+	/** 'habit' | 'denial' | 'none' — the kind holding the active exclusive streak */
+	active_kind: string;
+	active_streak: number;
+}
+
 export interface Stats {
 	today_count: number;
 	current_streak: number;
@@ -58,6 +83,11 @@ export interface Stats {
 	last_60m: number;
 	can_log: boolean;
 	next_allowed_at: string | null;
+	/** seconds until the daily cadence resets (next UTC midnight); 0 when allowed now */
+	next_allowed_in_secs: number;
+	/** true when the OTHER exclusive kind already ran today */
+	blocked_by_exclusivity: boolean;
+	devotion: DevotionIndex;
 }
 
 export interface DrillResponse {
@@ -83,7 +113,8 @@ export interface DenialResponse {
 
 export type LogKind = 'habit' | 'affirmation' | 'denial';
 
-export type LeaderboardPeriod = 'daily' | 'weekly' | 'alltime';
+/** MONTHLY (rolling 30 days) is the default board view. */
+export type LeaderboardPeriod = 'daily' | 'weekly' | 'monthly' | 'alltime';
 
 export interface Leaderboard {
 	period: LeaderboardPeriod;
