@@ -46,6 +46,8 @@ export interface LeaderboardEntry {
 	 *  `points` / `waste_count` / `affirmation_count` went away with the 10x
 	 *  weighting they encoded. */
 	denial_count: number;
+	/** never-decaying all-time log count; survives the 30-day score decay */
+	lifetime_total: number;
 	last_log_at: string | null;
 }
 
@@ -67,6 +69,11 @@ export interface DevotionIndex {
 	/** always 0 today: no reporting data source exists for it */
 	racism_penalty: number;
 	score: number;
+	/** every log ever made; never decays. A record, not a rankable score. */
+	lifetime_total: number;
+	/** true when the user has logs but none that still count: 30+ days idle and
+	 *  the score has been wiped. */
+	decayed: boolean;
 	/** 'habit' | 'denial' | 'none' — the kind holding the active exclusive streak */
 	active_kind: string;
 	active_streak: number;

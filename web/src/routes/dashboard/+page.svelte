@@ -111,6 +111,27 @@
 					= ({stats.devotion.wlw} + {stats.devotion.wld} + {stats.devotion.game_bonus}) × {fmtScore(stats.devotion.multiplier)}
 				</span>
 			</div>
+
+			<!--
+				Decay + lifetime. A score with no explanation reads as a bug when it
+				drops, so say plainly WHY it is what it is: 30 days of silence wipes
+				the score, and the record survives separately.
+			-->
+			{#if stats.devotion.decayed}
+				<div
+					style="margin-top:10px;padding:9px 11px;border-radius:8px;background:rgba(227,28,35,0.10);border:1px solid rgba(227,28,35,0.35);font-size:12px;line-height:1.5;color:var(--red-soft);"
+				>
+					Score wiped — 30 days without a log. Your record of
+					<span style="color:var(--text);font-weight:600;">{stats.devotion.lifetime_total}</span>
+					lifetime log{stats.devotion.lifetime_total === 1 ? '' : 's'} is intact, but the score resets with
+					the next log you make.
+				</div>
+			{:else}
+				<div style="margin-top:8px;font-size:12px;color:var(--text-dim);">
+					lifetime <span style="color:var(--text);">{stats.devotion.lifetime_total}</span> logs
+					<span style="opacity:0.75;">· score resets if you go 30 days without logging</span>
+				</div>
+			{/if}
 		</div>
 
 		<div class="stat-grid" style="margin-bottom:20px;">

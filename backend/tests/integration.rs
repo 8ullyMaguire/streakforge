@@ -1078,3 +1078,174 @@ async fn monthly_leaderboard_is_the_default_period(pool: PgPool) {
     .unwrap();
     assert_eq!(wlw_default, 1, "only the 10-day-old log is inside the month");
 }
+
+// ---------------------------------------------------------------------------
+// Score decay (0009): 30 days of inactivity wipes the score; lifetime survives.
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "./migrations")]
+async fn score_survives_inside_the_30_day_window(pool: PgPool) {
+    // Logs 5 and 29 days ago are both inside the 30-day window, so they count.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('decay_live') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    log_on_day(&pool, uid, "habit", 5).await;
+    log_on_day(&pool, uid, "habit", 29).await;
+
+    let (wlw, score, lifetime, decayed): (i64, f64, i64, bool) = sqlx::query_as(
+        "select wlw::bigint, score::float8, lifetime_total::bigint, decayed
+         from devotion_index($1, null)",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(wlw, 2, "both logs are inside the window");
+    assert!(score > 0.0, "score={score}");
+    assert_eq!(lifetime, 2, "lifetime counts every log");
+    assert!(!decayed, "an active user is not in the wiped state");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn score_decays_to_zero_after_30_days_idle(pool: PgPool) {
+    // The core rule: 30+ days of silence and the score is 0, while lifetime
+    // keeps the record. This is the "no recovery" half — it stays 0 until a
+    // new log lands.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('decay_wiped') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // A month of daily logging, then a long silence.
+    for g in (35..65).rev() {
+        log_on_day(&pool, uid, "habit", g).await;
+    }
+
+    let (wlw, score, lifetime, decayed): (i64, f64, i64, bool) = sqlx::query_as(
+        "select wlw::bigint, score::float8, lifetime_total::bigint, decayed
+         from devotion_index($1, null)",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(wlw, 0, "no logs inside the window");
+    assert_eq!(score, 0.0, "score is wiped after 30 idle days");
+    assert_eq!(lifetime, 30, "lifetime still records all 30 logs");
+    assert!(decayed, "user is in the wiped state");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_lapsed_user_drops_off_the_leaderboard(pool: PgPool) {
+    // `where di.score > 0` must now also exclude the wiped, so a lapsed user
+    // leaves the all-time board rather than sitting on it as a zero.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('decay_board') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Inside the window at first, so the user genuinely appears on the board.
+    for g in (1..5).rev() {
+        log_on_day(&pool, uid, "habit", g).await;
+    }
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "select exists (select 1 from alltime_leaderboard_weighted(50) where user_id = $1)",
+        )
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "must appear while the logs are still live"
+    );
+
+    // Age every log past the window.
+    sqlx::query("update habit_logs set logged_at = logged_at - interval '60 days' where user_id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(
+        !sqlx::query_scalar::<_, bool>(
+            "select exists (select 1 from alltime_leaderboard_weighted(50) where user_id = $1)",
+        )
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "a lapsed user must fall off the all-time board"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn logging_again_restores_the_score_from_lifetime(pool: PgPool) {
+    // "No recovery" applies to the SCORE, not to the record: a new log starts a
+    // fresh era, and lifetime proves the history was never actually lost.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('decay_return') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for g in (35..40).rev() {
+        log_on_day(&pool, uid, "habit", g).await;
+    }
+    let (before,): (f64,) = sqlx::query_as("select score::float8 from devotion_index($1, null)")
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(before, 0.0, "starts wiped");
+
+    log_on_day(&pool, uid, "habit", 0).await;
+
+    let (wlw, score, lifetime, decayed): (i64, f64, i64, bool) = sqlx::query_as(
+        "select wlw::bigint, score::float8, lifetime_total::bigint, decayed
+         from devotion_index($1, null)",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(wlw, 1, "only the new log counts: the 5 old ones are outside 30 days");
+    assert!(score > 0.0, "a new log restores a nonzero score");
+    assert_eq!(lifetime, 6, "lifetime spans the gap: 5 old + 1 new");
+    assert!(!decayed, "no longer in the wiped state");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_brand_new_user_is_not_flagged_decayed(pool: PgPool) {
+    // `decayed` must mean "had logs, lost them" — not "has no logs". A fresh
+    // account is at 0 for a different reason and must not show the hint.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('decay_new') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let (score, lifetime, decayed): (f64, i64, bool) = sqlx::query_as(
+        "select score::float8, lifetime_total::bigint, decayed from devotion_index($1, null)",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(score, 0.0);
+    assert_eq!(lifetime, 0);
+    assert!(!decayed, "a user with no logs at all is not 'decayed'");
+}

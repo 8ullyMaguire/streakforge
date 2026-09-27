@@ -118,6 +118,12 @@ pub struct DevotionIndexResponse {
     pub multiplier: f64,
     pub racism_penalty: f64,
     pub score: f64,
+    /// Every log ever made, never decayed. A record, not a rankable score:
+    /// nothing sorts by it and no multiplier applies to it.
+    pub lifetime_total: i64,
+    /// True when the user has logs but none that still count, i.e. 30+ days of
+    /// silence and the score has been wiped. Drives the UI hint.
+    pub decayed: bool,
     /// Streak of the currently active exclusive kind (the most recent WLW or WLD).
     pub active_kind: String,
     pub active_streak: i64,
@@ -156,6 +162,9 @@ pub struct LeaderboardEntry {
     /// `points` / `waste_count` / `affirmation_count` were dropped with the
     /// 10x weighting they encoded — nothing in the frontend read them.
     pub denial_count: i64,
+    /// Never-decaying all-time log count. Shown as a record alongside a score
+    /// that the 30-day decay rule can reset.
+    pub lifetime_total: i64,
     pub last_log_at: Option<String>,
 }
 
@@ -585,10 +594,15 @@ async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> Api
         (next_utc_midnight(now) - now).whole_seconds().max(0)
     };
 
-    // Whiteboi Devotion Index (all-time) for this user.
-    let (wlw, wld, game_bonus, mult, penalty, score): (i64, i64, i64, f64, f64, f64) = sqlx::query_as(
+    // Whiteboi Devotion Index for this user, under the 30-day decay rule: logs
+    // older than 30 days no longer count, so an inactive user reads 0 here while
+    // `lifetime_total` preserves their history.
+    let (wlw, wld, game_bonus, mult, penalty, score, lifetime_total, decayed): (
+        i64, i64, i64, f64, f64, f64, i64, bool,
+    ) = sqlx::query_as(
         "select wlw::bigint, wld::bigint, game_bonus::bigint,
-                multiplier::float8, racism_penalty::float8, score::float8
+                multiplier::float8, racism_penalty::float8, score::float8,
+                lifetime_total::bigint, decayed
          from devotion_index_alltime($1)",
     )
     .bind(user_id)
@@ -620,6 +634,8 @@ async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> Api
             multiplier: mult,
             racism_penalty: penalty,
             score,
+            lifetime_total,
+            decayed,
             active_kind,
             active_streak,
         },
@@ -651,6 +667,7 @@ pub async fn get_leaderboard(
         f64, i64, i64, i64, f64,                              // score + components
         i64, String, Option<OffsetDateTime>,                 // streak, kind, last
         f64,                                                 // racism_penalty (always 0)
+        i64,                                                 // lifetime_total
     );
     // Column list is explicit rather than `select *`: the leaderboard functions
     // return `score` and `multiplier` as SQL `numeric` (exact arithmetic, and
@@ -661,14 +678,15 @@ pub async fn get_leaderboard(
     // The board function does NOT return racism_penalty (only devotion_index
     // does), so it is filled with the literal 0 it always evaluates to.
     let rows: Vec<Row> = {
+        // The board function does not return racism_penalty, so the literal 0
+        // it always evaluates to is supplied here. It MUST sit in the position
+        // matching the Row tuple, not be appended: COLS already ends with
+        // lifetime_total, and a trailing literal shifts every later column.
         const COLS: &str = "user_id, username, display_name, avatar_url, \
              score::float8, wlw::bigint, wld::bigint, game_bonus::bigint, \
-             multiplier::float8, streak::bigint, active_kind, last_log_at";
-        let q = |fn_name: &str| {
-            format!(
-                "select {COLS}, 0::float8 from {fn_name}"
-            )
-        };
+             multiplier::float8, streak::bigint, active_kind, last_log_at, \
+             0::float8, lifetime_total::bigint";
+        let q = |fn_name: &str| format!("select {COLS} from {fn_name}");
         match period {
             "daily" => sqlx::query_as(&q("daily_leaderboard_weighted(50)"))
                 .fetch_all(&state.pool)
@@ -689,7 +707,7 @@ pub async fn get_leaderboard(
         .into_iter()
         .enumerate()
         .map(
-            |(i, (uid, uname, dname, av, score, wlw, wld, game_bonus, mult, streak, kind, last, penalty))| {
+            |(i, (uid, uname, dname, av, score, wlw, wld, game_bonus, mult, streak, kind, last, penalty, lifetime_total))| {
             LeaderboardEntry {
                 rank: (i + 1) as i64,
                 user_id: uid,
@@ -707,6 +725,7 @@ pub async fn get_leaderboard(
                 // Legacy mirror of wld, kept because both board pages render a
                 // 💧 badge from it. The authoritative field is `wld`.
                 denial_count: wld,
+                lifetime_total,
                 last_log_at: last
                     .map(|t| t.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()),
             }
