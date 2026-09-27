@@ -203,6 +203,13 @@ day, then all-time total. See `user_of_the_day()` in `0002_leaderboards.sql`.
 cd backend
 DATABASE_URL=postgres://streakforge:streakforge_dev@127.0.0.1:5432/streakforge_test cargo test
 
+# 26 tests: 8 unit + 18 integration. The integration tests need the test
+# database to exist AND the role's password to actually be the one above --
+# sqlx's test harness panics with "failed to connect to setup test database"
+# and a bare 28P01 if the password drifted, which reads as a broken suite
+# rather than a credential mismatch. Reset it with:
+#   sudo -u postgres psql -c "ALTER ROLE streakforge WITH PASSWORD '...';"
+
 # Frontend
 cd web
 npm run check
