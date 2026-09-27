@@ -84,7 +84,7 @@
 				</a>
 			{/each}
 		</div>
-		<div class="nav-spacer" />
+		<div class="nav-spacer"></div>
 		{#if user}
 			{#if locked}
 				<a href="/denial" class="nav-lock-badge" title="You are locked">🔒</a>
@@ -97,7 +97,12 @@
 	</div>
 </nav>
 
-<slot />
+<!--
+	No <slot /> here. The only use is `<Navbar />` in +layout.svelte, which
+	passes no children, so the slot rendered nothing and only cost a Svelte 5
+	deprecation warning. If Navbar ever needs to project page content, add
+	`let { children } = $props()` and `{@render children?.()}` instead.
+-->
 
 <style>
 	.nav-lock-badge {

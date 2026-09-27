@@ -1,6 +1,48 @@
 # StreakForge — Development Status
 
-Last updated: 2026-08-13
+Last updated: 2026-09-28
+
+## 2026-09-28 — the `wip/recover-2026-08-work` review
+
+`docs/specs/2026-09-28-branch-review-and-frontend-install.md` has the full
+write-up. Summary:
+
+**The work is wanted and the recovery was correct.** `98d61a8` is finished
+authored work (denial kind, chastity lock, weighted leaderboards). `bc08d5b`
+restored 77 files that a botched `git rm -r --cached` had staged as deleted
+while they sat on disk — `git reset` brought back the index without touching the
+working tree, so nothing was lost. The recovered content is the working state of
+2026-08-14, not speculative scaffolding.
+
+**The backend was already honest.** 18/18 integration tests against a
+zero-table database on the first attempt, three consecutive runs. It documents
+its own `streakforge_test` precondition in the file header.
+
+**The frontend could not be installed at all.** `npm ci` died on
+`sharp@0.34.5` (no prebuilt linux-x64 binary, source build fails), so
+`node_modules` was never populated and `build` / `test` / `check` all reported
+`command not found` — which reads exactly like "unverified frontend".
+
+Cause: `@sveltejs/enhanced-img` was registered in `vite.config.ts` and is a
+direct devDependency, but **no component uses `<enhanced:img>`** and the only
+three `<img>` tags take runtime URLs, so it had nothing to optimize. It was a
+native build dependency doing zero work. Removed from both `vite.config.ts` and
+`package.json`, with the reasoning at the removal site.
+
+Also cleared two Svelte 5 deprecations in `Navbar.svelte` (a `<slot />` no
+caller ever filled, and a self-closing `<div />`).
+
+**Now verified, not assumed:**
+
+    backend  cargo test --lib                 8 passed
+             cargo test --test integration    18 passed (x3)
+    frontend svelte-check                     0 errors, 0 warnings
+             vitest                           6 files, 47 tests passed
+             vite build                       built, adapter-static wrote build/
+
+**Still open:** `denial-retheme` and `wip/recover-2026-08-work` now hold
+identical content and `main` has neither. Merging to `main` and collapsing the
+duplicate branch name is left as a separate, explicit step.
 
 ## What's built (all verified working)
 

@@ -10,7 +10,10 @@ target/
 build/
 dist/
 *.egg-info/
-Cargo.lock
+# Cargo.lock is committed for the binary crate (backend/), so builds are
+# reproducible. It is already tracked; this line is only here to catch a
+# library or scratch crate added later.
+!backend/Cargo.lock
 
 # Environment and secrets
 .env
