@@ -34,18 +34,15 @@ fn manifestos_dir(state: &AppState) -> PathBuf {
 
 fn title_from_filename(filename: &str) -> String {
     // "01_starting_guide.md" -> "Starting Guide"
+    //
+    // The numeric prefix is stripped generically rather than by listing each
+    // known prefix: a hardcoded trim_start_matches("11_") chain meant any doc
+    // added past the tenth kept its number in the sidebar, and the omission is
+    // invisible until the doc is deployed. Any leading digits and one underscore
+    // go, so the numbering can grow without a code change.
     let stem = filename
         .trim_end_matches(".md")
-        .trim_start_matches("01_")
-        .trim_start_matches("02_")
-        .trim_start_matches("03_")
-        .trim_start_matches("04_")
-        .trim_start_matches("05_")
-        .trim_start_matches("06_")
-        .trim_start_matches("07_")
-        .trim_start_matches("08_")
-        .trim_start_matches("09_")
-        .trim_start_matches("10_")
+        .trim_start_matches(|c: char| c.is_ascii_digit() || c == '_')
         .replace('_', " ");
     stem.chars()
         .enumerate()
@@ -91,4 +88,35 @@ pub async fn get(State(state): State<AppState>, Path(id): Path<String>) -> ApiRe
     let body = std::fs::read_to_string(&path)
         .map_err(|_| ApiError::not_found("Manifesto not found"))?;
     Ok(Json(ManifestoContent { id, content: body }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::title_from_filename;
+
+    // The prefix trim used to be a hardcoded chain of trim_start_matches calls,
+    // one per known doc. Adding an 11th doc rendered as "11 roadmap" in the
+    // doctrine sidebar, and nothing failed — the only symptom was a stray number
+    // in a UI nobody tests. These pin the generic behaviour instead.
+    #[test]
+    fn strips_the_numeric_prefix() {
+        assert_eq!(title_from_filename("01_starting_guide.md"), "Starting guide");
+        assert_eq!(title_from_filename("10_organizing_bnwo.md"), "Organizing bnwo");
+    }
+
+    #[test]
+    fn strips_prefixes_past_ten() {
+        assert_eq!(title_from_filename("11_roadmap.md"), "Roadmap");
+        assert_eq!(title_from_filename("42_something.md"), "Something");
+    }
+
+    #[test]
+    fn handles_a_bare_filename_and_odd_prefixes() {
+        assert_eq!(title_from_filename("roadmap.md"), "Roadmap");
+        // No digits: the whole name survives.
+        assert_eq!(title_from_filename("appendix_b.md"), "Appendix b");
+        // Leading underscores with no number are trimmed too, and must not panic
+        // or produce an empty title.
+        assert_eq!(title_from_filename("__roadmap.md"), "Roadmap");
+    }
 }
