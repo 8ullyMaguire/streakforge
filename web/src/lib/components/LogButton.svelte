@@ -10,8 +10,15 @@
 		onLogged?: (s: Stats) => void;
 		/** Label + kind for the submit button. Defaults to the waste action. */
 		action?: { label: string; kind?: LogKind; notePlaceholder?: string };
+		/**
+		 * Local timestamp (Date.now) of when the current stats payload arrived.
+		 * The page owns the payload, so it re-baselines us on every fetch;
+		 * deriving it in here from `stats()` would loop, because the effect that
+		 * wrote it is the same one that would read it.
+		 */
+		receivedAt: number;
 	}
-	let { stats, onLogged, action }: Props = $props();
+	let { stats, onLogged, action, receivedAt }: Props = $props();
 
 	// $derived, not const: `action` is a reactive prop, and reading it once at
 	// init would freeze the kind if a caller ever swapped the action.
@@ -21,19 +28,14 @@
 	let logging = $state(false);
 	let note = $state('');
 
-	// Live countdown. `receivedAt` is when the current stats payload arrived, so
-	// the remaining seconds tick down from the SERVER's number rather than
-	// trusting the browser clock to agree with it. A bare setInterval that only
-	// bumped a counter would still read correctly; the baseline is what makes a
-	// reload or a backgrounded tab resync instead of drifting.
-	let receivedAt = $state(Date.now());
+	// Live countdown. The server sends the seconds left at the moment it built
+	// the response; anchoring to `receivedAt` and decrementing means the display
+	// never drifts against the server clock.
+	//
+	// A plain counter that exists only to be READ by the `remaining` derived.
+	// Without reading it, `Date.now()` inside the derived is not a reactive
+	// dependency, the derived never re-runs, and the countdown sits frozen.
 	let tick = $state(0);
-
-	$effect(() => {
-		// Re-baseline whenever a new payload lands (stats() is reactive here).
-		stats();
-		receivedAt = Date.now();
-	});
 
 	$effect(() => {
 		const t = setInterval(() => {
@@ -44,7 +46,11 @@
 
 	let serverSecs = $derived(stats()?.next_allowed_in_secs ?? 0);
 	let blocked = $derived(stats()?.blocked_by_exclusivity ?? false);
-	let remaining = $derived(remainingSecs(serverSecs, Date.now() - receivedAt));
+	let remaining = $derived.by(() => {
+		// `tick` is read purely for its reactivity; the value is irrelevant.
+		void tick;
+		return remainingSecs(serverSecs, Date.now() - receivedAt);
+	});
 	let canLog = $derived((stats()?.can_log ?? false) && remaining <= 0 && !blocked);
 
 	async function log() {

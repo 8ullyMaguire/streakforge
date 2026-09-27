@@ -7,6 +7,10 @@
 
 	let stats = $state<Stats | null>(null);
 	let error = $state<string | null>(null);
+	// When the current stats payload landed locally. LogButton anchors its
+	// countdown to this so the remaining seconds tick down from the server's
+	// number instead of trusting the browser clock to agree with it.
+	let receivedAt = $state(Date.now());
 
 	function last30Days(s: Stats): { date: string; count: number }[] {
 		const byDay = new Map<string, number>();
@@ -28,6 +32,7 @@
 	onMount(async () => {
 		try {
 			stats = await api.stats();
+			receivedAt = Date.now();
 		} catch (e) {
 			if (e instanceof ApiRequestError && e.status === 401) {
 				window.location.href = '/login';
@@ -39,6 +44,9 @@
 
 	function handleLogged(s: Stats) {
 		stats = s;
+		// Fresh payload: the server just reset its own remaining-seconds, so
+		// re-baseline rather than letting the old anchor run to zero early.
+		receivedAt = Date.now();
 	}
 
 	function calendarClass(day: Date): string {
@@ -129,7 +137,7 @@
 		</div>
 
 		<div class="card" style="margin-bottom:24px;">
-			<LogButton stats={() => stats!} onLogged={handleLogged} />
+			<LogButton stats={() => stats!} onLogged={handleLogged} {receivedAt} />
 		</div>
 
 		<h2 style="font-size:16px;letter-spacing:0.08em;margin:0 0 12px;">LAST 30 DAYS</h2>
