@@ -5,6 +5,7 @@ import type {
 	DenialResponse,
 	DrillResponse,
 	FeedItem,
+	KpiResponse,
 	Leaderboard,
 	LeaderboardPeriod,
 	LockInfo,
@@ -70,6 +71,7 @@ export const api = {
 	lockState: () => request<LockInfo>('/lock'),
 	leaderboard: (period: LeaderboardPeriod) => request<Leaderboard>(`/leaderboard/${period}`),
 	userOfTheDay: () => request<UserOfTheDay>('/user-of-the-day'),
+	kpi: () => request<KpiResponse>('/kpi'),
 	feed: (cursor?: string) =>
 		request<{ items: FeedItem[]; next_cursor: string | null }>(
 			`/feed${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`

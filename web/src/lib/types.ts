@@ -156,6 +156,33 @@ export interface ManifestoList {
 	docs: ManifestoDoc[];
 }
 
+export interface KpiTotals {
+	total_wasted: number;
+	total_denied: number;
+	total_affirmations: number;
+	total_users: number;
+	active_24h: number;
+	new_7d: number;
+	currently_locked: number;
+	total_lock_hours: number;
+	denial_rate: number;
+}
+
+export interface KpiTrendPoint {
+	day: string;
+	wasted: number;
+	denied: number;
+	affirmations: number;
+}
+
+export interface KpiResponse {
+	totals: KpiTotals;
+	trend: KpiTrendPoint[];
+	/** Reuses the leaderboard entry shape verbatim: the endpoint returns the
+	 *  same struct, so a second type here would be a second thing to drift. */
+	top_weekly: LeaderboardEntry[];
+}
+
 export interface ApiError {
 	error: string;
 }
