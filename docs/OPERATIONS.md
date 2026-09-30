@@ -67,12 +67,37 @@ noob_forger, late_night (3 today).
 
 ```bash
 cd backend
-DATABASE_URL=postgres://streakforge:***@127.0.0.1:5432/streakforge_test \
-  cargo test --test integration        # 17 tests
+DATABASE_URL=postgres://streakforge:***@127.0.0.1:5432/streakforge_dev \
+  cargo test                           # 48 tests: 11 unit + 37 integration
 
 cd ../web
 npm run check                          # svelte-check
-npx vitest run                         # 47 tests (6 files)
+npx vitest run                         # 69 tests (8 files)
+```
+
+Counts re-measured 2026-09-30; the 17/47 above had been stale in a third
+direction (the plan for the KPI dashboard quoted 19/48, also wrong).
+
+**The role and database must exist before the suite will run.** `sqlx::test`
+provisions a scratch database per test by cloning the one in `DATABASE_URL`, so
+it needs a role with CREATEDB *and* an existing database to clone. Without them
+every integration test fails with `role "streakforge" does not exist` or
+`database "streakforge_dev" does not exist`, which reads as a broken repo and
+is not one:
+
+```bash
+sudo -u postgres psql -c "CREATE ROLE streakforge WITH LOGIN PASSWORD 'streakforge_dev' CREATEDB;"
+sudo -u postgres psql -c "CREATE DATABASE streakforge_dev OWNER streakforge;"
+```
+
+**After adding a migration, touch the test file before re-running.**
+`#[sqlx::test(migrations = "./migrations")]` embeds its migration set when the
+test target is compiled; a new `.sql` file does not invalidate that binary, so
+the new migration is simply absent from every database the suite provisions and
+the symptom is a missing database object rather than a stale build.
+
+```bash
+touch tests/integration.rs
 ```
 
 ---

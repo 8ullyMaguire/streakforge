@@ -54,6 +54,8 @@ duplicate branch name is left as a separate, explicit step.
 - [x] **Weighted leaderboards** (`*_leaderboard_weighted`): denial = 10 pts,
       waste = 1 pt, 3 affirmations = 1 pt; per-row waste/denial/affirmation counts
 - [x] `user_of_the_day()` — count + earliest-log tiebreak (same weighting)
+- [x] `kpi_totals()` / `kpi_trend(n)` — community KPI dashboard functions
+      (migration `0010_kpis.sql`), served by `GET /api/kpi`
 - [x] `activity_feed()` — cursor pagination
 - [x] `profile_stats()` — today / week / alltime / streaks
 - [x] Auth: local username/password (Argon2id) + session cookies; bot-dissuasion
@@ -79,8 +81,10 @@ duplicate branch name is left as a separate, explicit step.
 
 ### Frontend (SvelteKit / Svelte 5)
 - [x] wlw-style dark theme (near-black, red/gold, Inter + Roboto Mono)
-- [x] Landing: hero, big green/black tabular counters (**LOAD$ WASTED** +
-      **LOAD$ DENIED**), marquee, UOTD card, top-25 daily board, recent activity
+- [x] Landing: hero, big green/black tabular counters (**loads wasted** +
+      **loads denied**), marquee, UOTD card, top-25 daily board, recent activity
+- [x] **Community KPI dashboard** (`/kpi`): nine stat cards, a 30-day stacked
+      trend chart, top weekly board. Public, no auth. Footer-linked.
 - [x] Login: username/password form (SIGN IN / REGISTER tabs), honeypot +
       timing + JS challenge bot-dissuasion, no external accounts
 - [x] Dashboard ("KNOW YOUR PLACE"): stat cards, **WASTE A LOAD** button

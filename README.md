@@ -45,6 +45,10 @@ Plus `STATUS.md` for the living dev-status checklist.
 - **Community leaderboards** — Daily (UTC), Weekly (Monday UTC start), and
   All-time. Top 50 each, with rank, avatar, username, count, and last-log time.
 - **User of the Day** — highest today's count; ties broken by earliest log.
+- **Community KPI dashboard** — a public `/kpi` page: loads wasted/denied
+  totals, denial rate, affirmations, active (24h) and new (7d) users,
+  currently-locked count, all-time lock hours, a 30-day stacked trend chart,
+  and the top weekly board. No auth, like the landing counters.
 - **Public activity feed** — reverse-chronological, cursor-paginated, with notes.
 - **Profiles** — public username, display name, avatar (DiceBear fallback),
   stats. Editable in Settings.
