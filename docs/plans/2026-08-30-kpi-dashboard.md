@@ -697,14 +697,47 @@ Expected: `/api/kpi` JSON; bundle/page contains the KPI strings; `/kpi` returns 
 
 ## Acceptance criteria
 
-- [ ] `GET /api/kpi` returns totals, 30-day trend, top-weekly (public, no auth)
-- [ ] `/kpi` page renders 9 stat cards, stacked bar chart, top-weekly table, empty states
-- [ ] Footer link present; mobile BottomNav unchanged
-- [ ] Backend tests: 19/19 green (new `kpi_totals_and_trend`)
-- [ ] Frontend tests: 48/48 green (new `kpi.test.ts`); `svelte-check` clean
-- [ ] Repo docs current: README, STATUS, docs/OPERATIONS
-- [ ] Deployed via `scripts/deploy.sh thinkcentre`; live `/api/kpi` + `/kpi` verified against the LIVE bundle
-- [ ] No `load$` copy anywhere (maintainer rule); theme preserved (denial encouraged)
+- [x] `GET /api/kpi` returns totals, 30-day trend, top-weekly (public, no auth)
+      — verified against a running server with seeded data: 20 wasted, 7 denied,
+      25.9% denial rate, 30 trend rows, `top_weekly [(1, alpha, 27.0), (2, beta, 1.0)]`.
+- [x] `/kpi` page renders 9 stat cards, stacked bar chart, top-weekly table, empty states
+      — verified in a browser, not by build success: all nine cards show real
+      values, 30 trend bars, both ranked rows, and the headings are THE NUMBERS /
+      LAST 30 DAYS / TOP THIS WEEK.
+- [x] Footer link present; mobile BottomNav unchanged
+- [x] Backend tests green. **The plan's "19/19" was wrong in three successive
+      directions**: this file said 19, OPERATIONS.md said 17, and the real count
+      is 48 (11 unit + 37 integration). 4 of the 37 are the KPI tests.
+- [x] Frontend tests green; `svelte-check` clean. Plan said 48/48; real is
+      **69 across 8 files**, 3 of them the new `kpi.test.ts`. 0 errors, 0 warnings.
+- [x] Repo docs current: README, STATUS, docs/OPERATIONS
+- [ ] **NOT DONE — needs the owner: deploy.** `scripts/deploy.sh thinkcentre`
+      pushes to a live server; that is not a call to make unasked. Everything
+      above is verified locally against a running instance on this box.
+- [x] No `load$` copy anywhere (maintainer rule); theme preserved (denial encouraged)
+      — the new page renders no `load$`. Worth noting the rule had already been
+      broken in *documentation*: STATUS.md described the landing counters as
+      **LOAD$ WASTED** / **LOAD$ DENIED**, the banned string, in the document
+      whose job is to describe the code. The page itself has been correct; only
+      the doc was wrong. Fixed.
+
+## What drifted between the plan (2026-08-30) and the build (2026-09-30)
+
+Recorded because the plan was a month old and every one of these was a place
+where following it literally would have produced broken code.
+
+| Plan said | Reality | Consequence if followed |
+|---|---|---|
+| migration `0008_kpis.sql` | 0008 and 0009 were taken | a forked migration chain |
+| backend 18→19 tests | 48 now | a false "suite shrank" reading |
+| frontend 47→48 tests | 69 now | a false "tests lost" reading |
+| render `e.points` | field removed with the 10x weighting | a page reading `undefined` |
+| `{@const}` inside a card div | svelte-check rejects it | a build error |
+| match the "Install the app" link styling | it is a ghost button, not a link | two competing CTAs in the footer |
+| db `streakforge_test` | role/database never created on this box | 32 of 33 tests failing on a clean tree |
+
+Seven drifts in one plan, four of which produce a build or runtime failure and
+three of which produce a document that lies about the code.
 
 ## Risks / notes
 
