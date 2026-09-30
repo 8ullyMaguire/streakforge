@@ -30,6 +30,13 @@ echo "==> 1/6 Building release binary (local)"
 # a 3-day-old binary with the new migrations and the new frontend, and every
 # health check PASSED, because the old binary served the old routes perfectly
 # well. /api/kpi 404'd on a deploy the script reported as successful.
+#
+# Scope, since it was asked: the window is bounded. ~/.cargo/config.toml has
+# mtime 2026-09-30 16:24; the last deploy before that was Sep 27 15:59 and it
+# shipped a binary built that same afternoon, so builds were landing in
+# backend/target correctly until the config appeared. The only affected deploy
+# was the 19:06 one, which was caught and re-run clean. Nothing stale ever
+# reached production.
 (cd "$ROOT/backend" && cargo build --release)
 CARGO_TARGET_DIR_ACTUAL="$(cd "$ROOT/backend" && cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
 BIN_SRC="$CARGO_TARGET_DIR_ACTUAL/release/streakforge-api"
