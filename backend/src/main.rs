@@ -73,6 +73,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/lock", post(streakforge_api::api::lock))
         .route("/unlock", post(streakforge_api::api::unlock))
         .route("/leaderboard/{period}", get(streakforge_api::api::get_leaderboard))
+        // Public, like /leaderboard and /user-of-the-day: no auth extractor, so
+        // the KPI page is readable by anyone, which is the point of it.
+        .route("/kpi", get(streakforge_api::api::get_kpi))
         .route("/user-of-the-day", get(streakforge_api::api::get_user_of_the_day))
         .route("/total", get(streakforge_api::api::get_total))
         .route("/feed", get(streakforge_api::api::get_feed))

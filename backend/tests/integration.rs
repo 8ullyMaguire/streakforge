@@ -1321,3 +1321,115 @@ async fn kpi_totals_on_an_empty_site_are_zero_not_null(pool: PgPool) {
         sqlx::query_as("select * from kpi_trend(7)").fetch_all(&pool).await.unwrap();
     assert_eq!(seven.len(), 7);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_kpi_top_weekly_query_decodes(pool: PgPool) {
+    // The plan called the /kpi handler a thin mapper needing no test, and for
+    // the totals that is true. It is NOT true of the top-weekly board it reuses:
+    // weekly_leaderboard_weighted returns score and multiplier as SQL numeric,
+    // which sqlx cannot decode into f64. get_leaderboard already hit this and
+    // works around it with an explicit column list plus a literal 0 for
+    // racism_penalty. This pins that the KPI endpoint's copy of that query
+    // decodes, because the failure otherwise appears only as a 500 in a
+    // browser, on the one page whose whole job is to load.
+    let u = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('kpi_board') returning id",
+    ).fetch_one(&pool).await.unwrap();
+    sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'habit')")
+        .bind(u).execute(&pool).await.unwrap();
+    sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'denial')")
+        .bind(u).execute(&pool).await.unwrap();
+
+    type WeeklyRow = (
+        uuid::Uuid, String, Option<String>, Option<String>,
+        f64, i64, i64, i64, f64,
+        i64, String, Option<OffsetDateTime>,
+        f64,
+        i64,
+    );
+    const WEEKLY_COLS: &str = "user_id, username, display_name, avatar_url, \
+         score::float8, wlw::bigint, wld::bigint, game_bonus::bigint, \
+         multiplier::float8, streak::bigint, active_kind, last_log_at, \
+         0::float8, lifetime_total::bigint";
+    let rows: Vec<WeeklyRow> = sqlx::query_as(&format!(
+        "select {WEEKLY_COLS} from weekly_leaderboard_weighted(5)"
+    )).fetch_all(&pool).await.unwrap();
+
+    assert_eq!(rows.len(), 1, "the one active user should be on the weekly board");
+    let r = &rows[0];
+    assert_eq!(r.1, "kpi_board");
+    assert!(r.4.is_finite(), "score decoded as a finite f64, got {}", r.4);
+    assert!(r.8.is_finite(), "multiplier decoded as a finite f64, got {}", r.8);
+    assert_eq!(r.12, 0.0, "racism_penalty is the literal 0, in its tuple position");
+    assert_eq!(r.13, 2, "lifetime_total is the last column, so a shifted tuple would corrupt it");
+
+    // The exact failure the explicit column list prevents: select * on a
+    // numeric-returning function.
+    let err = sqlx::query_as::<_, (uuid::Uuid, String, Option<String>, Option<String>,
+        f64, i64, i64, i64, f64, i64, String, Option<OffsetDateTime>, f64, i64)>(
+        "select * from weekly_leaderboard_weighted(5)")
+        .fetch_all(&pool).await;
+    assert!(err.is_err(), "select * must NOT decode here; if it now does, the casts in get_kpi are redundant and this test is asserting the wrong thing");
+}
+
+/// The mutations K1-K5 all live in the handler, above the SQL seam, so no
+/// database-backed test can see them. These assert on the handler's source
+/// instead -- the same technique this repo already uses for the kindred
+/// manifest checks.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_kpi_handler_casts_the_numeric_board_columns(pool: PgPool) {
+    // Read at RUNTIME, not include_str!. include_str! embeds the file when the
+    // test target is compiled, and a change to src/api.rs does not invalidate
+    // that binary -- the test kept asserting against a stale copy and passed
+    // with `rank: 999i64` sitting in the file on disk. A probe confirmed it
+    // (rank999=false while the mutation was applied). include_str! is only
+    // safe for a file that changes in the same commit as the test.
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/api.rs"),
+    )
+    .expect("src/api.rs is readable");
+
+    let kpi = src.split("pub async fn get_kpi").nth(1)
+        .expect("get_kpi exists");
+    let kpi = &kpi[..kpi.find("\npub ").unwrap_or(kpi.len())];
+
+    // K1: dropping `::float8` compiles fine and passes every SQL test, then 500s
+    // on the first real request. get_leaderboard documents this exact trap.
+    assert!(kpi.contains("score::float8"),
+        "the KPI top-weekly query must cast score, or it 500s at runtime");
+    assert!(kpi.contains("multiplier::float8"),
+        "the KPI top-weekly query must cast multiplier for the same reason");
+
+    // K2: the literal 0 stands in for racism_penalty, which the board function
+    // does not return. It must sit before lifetime_total in the column list,
+    // because the Row tuple is positional -- appended, it shifts every later
+    // column and the handler decodes a bigint into an f64.
+    //
+    // Compared within the ONE column-list literal. The first version searched
+    // the whole handler body, where the test's own const also appears, so the
+    // comparison passed whether or not the mutation was applied.
+    let cols = kpi
+        .split("const WEEKLY_COLS")
+        .nth(1)
+        .and_then(|s| s.split("lifetime_total::bigint\";").next())
+        .map(|s| format!("{s}lifetime_total::bigint\";"))
+        .expect("the handler declares WEEKLY_COLS");
+    let zero = cols.find("0::float8").expect("the literal 0 is in the column list");
+    let lifetime = cols.find("lifetime_total::bigint").expect("lifetime_total cast is in the column list");
+    assert!(zero < lifetime,
+        "the racism_penalty literal must precede lifetime_total in the column list; after it, the tuple decodes shifted");
+
+    // K3: the trend window is fixed at 30 days.
+    assert!(kpi.contains("kpi_trend(30)"),
+        "the trend window is 30 days; a shorter window silently shrinks the chart");
+    // K4: rank is 1-based. Counted rather than merely present, because
+    // get_leaderboard also assigns (i + 1).
+    assert_eq!(kpi.matches("rank: (i + 1) as i64").count(), 1,
+        "top_weekly must assign rank as (i + 1) exactly once");
+    assert!(!kpi.contains("rank: i as i64"),
+        "top_weekly ranks must start at 1, not 0");
+    // And the endpoint is public: no auth extractor on the handler.
+    assert!(kpi.contains("State(state): State<AppState>") && !kpi.contains("AuthUser"),
+        "get_kpi must take no auth extractor -- the page is public by design");
+    drop(pool);
+}

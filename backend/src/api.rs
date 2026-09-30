@@ -735,6 +735,142 @@ pub async fn get_leaderboard(
     Ok(Json(LeaderboardResponse { period: period.into(), entries }))
 }
 
+#[derive(Debug, Serialize)]
+pub struct KpiTotalsResponse {
+    pub total_wasted: i64,
+    pub total_denied: i64,
+    pub total_affirmations: i64,
+    pub total_users: i64,
+    pub active_24h: i64,
+    pub new_7d: i64,
+    pub currently_locked: i64,
+    pub total_lock_hours: f64,
+    pub denial_rate: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KpiTrendPoint {
+    pub day: String,
+    pub wasted: i64,
+    pub denied: i64,
+    pub affirmations: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KpiResponse {
+    pub totals: KpiTotalsResponse,
+    pub trend: Vec<KpiTrendPoint>,
+    pub top_weekly: Vec<LeaderboardEntry>,
+}
+
+/// GET /api/kpi — public community KPIs. No auth, matching the landing page's
+/// public counters: "the community is alive" is the feature, and a gate would
+/// defeat it.
+///
+/// The plan for this endpoint said the mapper is a thin shape like
+/// get_leaderboard and needs no test of its own. That is true of the happy path
+/// and false of the part that actually breaks: the top-weekly board. It is read
+/// with the SAME explicit column list as get_leaderboard, not `select *`,
+/// because the board functions return `score` and `multiplier` as SQL numeric
+/// and sqlx cannot decode those into f64 -- `select *` here would 500 at
+/// runtime, on every request, for a page whose whole job is to load. The
+/// literal 0 for racism_penalty must sit in the tuple position the Row type
+/// expects, not be appended, or every later column shifts.
+pub async fn get_kpi(State(state): State<AppState>) -> ApiResult<Json<KpiResponse>> {
+    let (
+        total_wasted,
+        total_denied,
+        total_affirmations,
+        total_users,
+        active_24h,
+        new_7d,
+        currently_locked,
+        total_lock_hours,
+        denial_rate,
+    ): (i64, i64, i64, i64, i64, i64, i64, f64, f64) = sqlx::query_as("select * from kpi_totals()")
+        .fetch_one(&state.pool)
+        .await?;
+
+    // Fixed at 30 days, matching the plan's decision that the trend window is a
+    // coarse daily view. Not a query parameter: a public endpoint that lets a
+    // caller ask for 10_000 days is a way to run an expensive scan on demand.
+    let trend_rows: Vec<(String, i64, i64, i64)> =
+        sqlx::query_as("select * from kpi_trend(30)")
+            .fetch_all(&state.pool)
+            .await?;
+    let trend = trend_rows
+        .into_iter()
+        .map(|(day, wasted, denied, affirmations)| KpiTrendPoint {
+            day,
+            wasted,
+            denied,
+            affirmations,
+        })
+        .collect();
+
+    // Same shape and same casts as get_leaderboard's "weekly" branch. Rank is
+    // assigned by position, so the ORDER BY inside the function is what decides
+    // the numbering.
+    type WeeklyRow = (
+        uuid::Uuid, String, Option<String>, Option<String>,   // identity
+        f64, i64, i64, i64, f64,                              // score + components
+        i64, String, Option<OffsetDateTime>,                 // streak, kind, last
+        f64,                                                 // racism_penalty (always 0)
+        i64,                                                 // lifetime_total
+    );
+    const WEEKLY_COLS: &str = "user_id, username, display_name, avatar_url, \
+         score::float8, wlw::bigint, wld::bigint, game_bonus::bigint, \
+         multiplier::float8, streak::bigint, active_kind, last_log_at, \
+         0::float8, lifetime_total::bigint";
+    let weekly: Vec<WeeklyRow> =
+        sqlx::query_as(&format!("select {WEEKLY_COLS} from weekly_leaderboard_weighted(5)"))
+            .fetch_all(&state.pool)
+            .await?;
+    let top_weekly = weekly
+        .into_iter()
+        .enumerate()
+        .map(|(i, (uid, uname, dname, av, score, wlw, wld, game_bonus, mult, streak, kind, last, penalty, lifetime_total))| {
+            LeaderboardEntry {
+                rank: (i + 1) as i64,
+                user_id: uid,
+                username: uname,
+                display_name: dname,
+                avatar_url: av,
+                score,
+                wlw,
+                wld,
+                game_bonus,
+                multiplier: mult,
+                racism_penalty: penalty,
+                streak,
+                active_kind: kind,
+                denial_count: wld,
+                lifetime_total,
+                last_log_at: last.map(|t| {
+                    t.format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_default()
+                }),
+            }
+        })
+        .collect();
+
+    Ok(Json(KpiResponse {
+        totals: KpiTotalsResponse {
+            total_wasted,
+            total_denied,
+            total_affirmations,
+            total_users,
+            active_24h,
+            new_7d,
+            currently_locked,
+            total_lock_hours,
+            denial_rate,
+        },
+        trend,
+        top_weekly,
+    }))
+}
+
 pub async fn get_user_of_the_day(
     State(state): State<AppState>,
 ) -> ApiResult<Json<Option<UserOfTheDay>>> {
