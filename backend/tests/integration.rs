@@ -1249,3 +1249,75 @@ async fn a_brand_new_user_is_not_flagged_decayed(pool: PgPool) {
     assert_eq!(lifetime, 0);
     assert!(!decayed, "a user with no logs at all is not 'decayed'");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn kpi_totals_and_trend(pool: PgPool) {
+    let a = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username, created_at) values ('kpi_a', now() - interval '3 days') returning id",
+    ).fetch_one(&pool).await.unwrap();
+    let b = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username, created_at) values ('kpi_b', now() - interval '40 days') returning id",
+    ).fetch_one(&pool).await.unwrap();
+    // a: 2 wastes + 1 denial today-ish; 1 affirmation 2 days ago
+    for _ in 0..2 {
+        sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'habit')")
+            .bind(a).execute(&pool).await.unwrap();
+    }
+    sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'denial')")
+        .bind(a).execute(&pool).await.unwrap();
+    sqlx::query("insert into habit_logs (user_id, kind, logged_at) values ($1, 'affirmation', now() - interval '2 days')")
+        .bind(a).execute(&pool).await.unwrap();
+    // b: 1 waste 30 hours ago (not in the 24h window, inside the trend)
+    sqlx::query("insert into habit_logs (user_id, kind, logged_at) values ($1, 'habit', now() - interval '30 hours')")
+        .bind(b).execute(&pool).await.unwrap();
+
+    let (tw, td, ta, tu, active, new7, locked, lock_h, rate):
+        (i64, i64, i64, i64, i64, i64, i64, f64, f64) =
+        sqlx::query_as("select * from kpi_totals()").fetch_one(&pool).await.unwrap();
+    assert_eq!(tw, 3, "2 today + 1 from 30h ago is 3 all-time");
+    assert_eq!(td, 1);
+    assert_eq!(ta, 1);
+    assert_eq!(tu, 2);
+    assert_eq!(active, 1, "only `a` logged within 24h; `b`'s log is 30h old");
+    assert_eq!(new7, 1, "only `a` was created within 7 days");
+    assert_eq!(locked, 0);
+    assert!(lock_h == 0.0, "no lock sessions, so no hours; got {lock_h}");
+    assert!((rate - 25.0).abs() < 0.1, "1 denied / 4 committed = 25%, got {rate}");
+
+    // An open lock counts as currently_locked and accrues hours until now.
+    sqlx::query("insert into lock_sessions (user_id, locked_at) values ($1, now() - interval '2 hours')")
+        .bind(a).execute(&pool).await.unwrap();
+    let (locked, lock_h): (i64, f64) =
+        sqlx::query_as("select currently_locked, total_lock_hours from kpi_totals()")
+            .fetch_one(&pool).await.unwrap();
+    assert_eq!(locked, 1);
+    assert!(lock_h >= 2.0, "an open 2h lock must count its elapsed hours; got {lock_h}");
+
+    // The trend returns one row per day INCLUDING days with no activity, so a
+    // chart does not silently compress its own x-axis.
+    let trend: Vec<(String, i64, i64, i64)> =
+        sqlx::query_as("select * from kpi_trend(30)").fetch_all(&pool).await.unwrap();
+    assert_eq!(trend.len(), 30, "a 30-day trend must have 30 rows, empty days included");
+    let today = trend.last().unwrap().clone();
+    assert_eq!(today.1, 2, "wasted today");
+    assert_eq!(today.2, 1, "denied today");
+    let two_days_ago = trend[trend.len() - 3].clone();
+    assert_eq!(two_days_ago.3, 1, "the affirmation 2 days ago");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn kpi_totals_on_an_empty_site_are_zero_not_null(pool: PgPool) {
+    // The page renders these on a fresh install. A NULL where a number belongs
+    // is a 500 in the template, not a zero.
+    let (tw, td, ta, tu, active, new7, locked, lock_h, rate):
+        (i64, i64, i64, i64, i64, i64, i64, f64, f64) =
+        sqlx::query_as("select * from kpi_totals()").fetch_one(&pool).await.unwrap();
+    assert_eq!((tw, td, ta, tu, active, new7, locked), (0, 0, 0, 0, 0, 0, 0));
+    assert!(lock_h == 0.0, "an empty site has no lock hours; got {lock_h}");
+    assert!(rate == 0.0, "0 denied / 0 committed must be 0, not NaN; got {rate}");
+
+    // And a shorter window is honoured, so the caller controls the span.
+    let seven: Vec<(String, i64, i64, i64)> =
+        sqlx::query_as("select * from kpi_trend(7)").fetch_all(&pool).await.unwrap();
+    assert_eq!(seven.len(), 7);
+}
