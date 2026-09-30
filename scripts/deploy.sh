@@ -21,14 +21,36 @@ BIN_DIR="/opt/streakforge"
 WWW_DIR="/var/www/streakforge"
 
 echo "==> 1/6 Building release binary (local)"
+# Ask cargo where it builds instead of assuming. ~/.cargo/config.toml sets a
+# global `target-dir = /home/alvaro/.cache/cargo-target`, so a hardcoded
+# backend/target is simply the wrong path on this machine -- and the rsync in
+# step 3 would then ship whatever stale binary happened to be sitting there.
+#
+# This is not hypothetical. A deploy on 2026-09-30 did exactly that: it shipped
+# a 3-day-old binary with the new migrations and the new frontend, and every
+# health check PASSED, because the old binary served the old routes perfectly
+# well. /api/kpi 404'd on a deploy the script reported as successful.
 (cd "$ROOT/backend" && cargo build --release)
+CARGO_TARGET_DIR_ACTUAL="$(cd "$ROOT/backend" && cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
+BIN_SRC="$CARGO_TARGET_DIR_ACTUAL/release/streakforge-api"
+if [ -z "$CARGO_TARGET_DIR_ACTUAL" ] || [ ! -x "$BIN_SRC" ]; then
+  echo "FATAL: cargo built no release binary (looked for $BIN_SRC)" >&2
+  exit 1
+fi
+# And assert it is not older than the newest source file, so a build that
+# silently did nothing cannot ship.
+if [ "$BIN_SRC" -ot "$ROOT/backend/src/api.rs" ]; then
+  echo "FATAL: $BIN_SRC is older than src/api.rs — the build did not run." >&2
+  exit 1
+fi
+echo "    binary: $BIN_SRC"
 
 echo "==> 2/6 Building frontend (production)"
 (cd "$ROOT/web" && npm run build >/dev/null)
 
 echo "==> 3/6 Syncing to $HOST"
 ssh "$HOST" "mkdir -p $DEPLOY_DIR && sudo mkdir -p $BIN_DIR $WWW_DIR && sudo chown -R alvaro:alvaro $BIN_DIR $WWW_DIR"
-rsync -az --delete "$ROOT/backend/target/release/streakforge-api" "$HOST:$BIN_DIR/"
+rsync -az --delete "$BIN_SRC" "$HOST:$BIN_DIR/"
 rsync -az --delete "$ROOT/backend/migrations" "$HOST:$DEPLOY_DIR/"
 rsync -az --delete "$ROOT/manifestos" "$HOST:$DEPLOY_DIR/"
 rsync -az --delete "$ROOT/web/build/" "$HOST:$WWW_DIR/"
@@ -95,7 +117,7 @@ HEALTH_FAIL=0
 # query — so "/api/leaderboard" and "/api/feed/0" are 404s by design, not
 # faults. These paths mirror what web/src/lib/api.ts actually requests.
 for path in "/" "/api/total" "/api/leaderboard/monthly" "/api/leaderboard/alltime" \
-            "/api/user-of-the-day" "/api/feed" "/api/doctrine"; do
+            "/api/user-of-the-day" "/api/feed" "/api/doctrine" "/api/kpi"; do
   code=$(curl -s -o /dev/null -w '%{http_code}' "https://streakforge.polarisocial.xyz$path")
   if [ "$code" = "200" ]; then
     echo "  ok   $path ($code)"
