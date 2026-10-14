@@ -224,17 +224,20 @@ streakforge/                        # repo root (git, private on opencommit.eu)
 │   │   ├── 0003_affirmations.sql   # kind column, user_streak_kind(), kind-filtered redefs
 │   │   └── 0004_local_auth.sql     # password_hash + social_url, provider default 'local' |
 │   ├── src/
-│   │   ├── main.rs                 # router, session layer, SPA fallback, startup
-│   │   ├── lib.rs                  # AppState + module facade (for tests)
-│   │   ├── api.rs                  # ALL API handlers + DTOs + rate limiting
-│   │   ├── auth.rs                 # register/login/nonce, Argon2id, bot-dissuasion, sessions |
-│   │   ├── auth_tests.rs           # unit tests for challenge proof / validation
+│   │   ├── main.rs                 # startup ONLY: logging, config, pool, migrations, bind
+│   │   ├── router.rs               # the HTTP surface: API nest, static, SPA fallback, sessions
+│   │   ├── lib.rs                  # AppState + module facade (so tests can mount the router)
+│   │   ├── api.rs                  # ALL API handlers + DTOs + rate limiting + /health
+│   │   ├── auth.rs                 # register/login/nonce, Argon2id, bot-dissuasion, sessions,
+│   │   │                           #   the failed-login throttle and its escalation
+│   │   ├── auth_tests.rs           # unit tests for challenge proof / validation / throttle maths
 │   │   ├── manifesto.rs            # /api/manifesto list + get
-│   │   ├── config.rs               # env config struct
+│   │   ├── config.rs               # env config struct + bounded_i64
 │   │   ├── db.rs                   # pool connect + migrations
 │   │   └── error.rs                # ApiError (IntoResponse), From impls
 │   └── tests/
-│       └── integration.rs          # 6 DB-backed tests (see Testing)
+│       ├── integration.rs          # 48 DB-backed tests: SQL functions + auth logic (see §16.1)
+│       └── routes.rs               # 9 tests through the REAL router (see §16.4)
 ├── web/
 │   ├── package.json                # scripts: dev/build/check/test
 │   ├── svelte.config.js            # adapter-static, SPA fallback
@@ -249,6 +252,14 @@ streakforge/                        # repo root (git, private on opencommit.eu)
 │       │   ├── api.ts              # fetch client + timeAgo + formatCount
 │       │   ├── types.ts            # API types mirroring backend DTOs
 │       │   ├── markdown.ts         # tiny markdown renderer
+│       │   ├── countdown.ts        # the daily countdown + budgetLabel (item 15)
+│       │   ├── decay.ts            # the decay sentence + its colours (item 16)
+│       │   ├── deeplink.ts         # /log?kind= parsing + next= guard (item 14)
+│       │   ├── agegate.ts          # the 18+ acknowledgement (item 08)
+│       │   ├── glossary.ts         # the vocabulary, each term naming its enforcement (item 12)
+│       │   ├── typo.ts             # the typographic pass
+│       │   ├── kpi.ts              # KPI formatting
+│       │   ├── challenge.ts        # the sha256 nonce proof
 │       │   ├── affirmations.ts     # affirmation deck + daily pick
 │       │   ├── toasts.svelte.ts    # toast store (Svelte 5 runes)
 │       │   ├── validation.ts       # isValidUsername
@@ -267,15 +278,24 @@ streakforge/                        # repo root (git, private on opencommit.eu)
 │           ├── dashboard/+page.svelte
 │           ├── drill/+page.svelte
 │           ├── leaderboard/+page.svelte
-│           ├── feed/+page.svelte
-│           ├── manifesto/+page.svelte
+│           ├── feed/+page.svelte       # activity only — notes stay with their author
+│           ├── doctrine/+page.svelte   # the manifesto reader (was /manifesto)
+│           ├── denial/+page.svelte
+│           ├── drill/+page.svelte
+│           ├── kpi/+page.svelte
+│           ├── glossary/+page.svelte   # 17 terms (item 12)
+│           ├── terms/+page.svelte      # what is public, what is private (item 08)
+│           ├── log/+page.svelte        # deep-link logging (item 14)
+│           ├── app/+page.svelte
 │           ├── profile/[username]/+page.svelte
 │           └── settings/+page.svelte
-├── manifestos/                     # 9 curated markdown docs (served by /api/manifesto)
+├── manifestos/                     # 11 curated markdown docs (served by /api/doctrine)
 ├── scripts/
 │   ├── dev.sh                      # local dev: build frontend + run backend
 │   ├── seed.sql                    # demo users + historical logs
-│   └── deploy.sh                   # ThinkCentre deploy (systemd, port 8001)
+│   ├── backup-db.sh                # nightly pg_dump (no DSN in argv, atomic, 10 KB floor)
+│   ├── restore-db.sh               # the rehearsal; fails on a stale dump
+│   └── deploy.sh                   # ThinkCentre deploy (systemd, port 8001, cron installs)
 └── .gitignore                      # target/, node_modules/, build/, .svelte-kit/, .env
 ```
 
@@ -496,6 +516,13 @@ rule rather than a board window. Silence for 30 days wipes the score to zero whi
 The dashboard warns at ≤10 days, and says something different once the score has
 already been wiped, because "0 days left" and "already gone" need different actions.
 
+Those three sentences live in `web/src/lib/decay.ts` (`decayNotice`, returning the exact
+string rendered plus a colour kind), not inline in the template. That is a correction,
+not a preference: while the copy was markup, `decay.test.ts` could not reach it and the
+plan's line "the dashboard notice is covered by a component test" was not true of
+anything. The threshold is asserted on both sides of itself — quiet at 11 days, warning
+at 10 — because a notice that fires early becomes furniture someone scrolls past.
+
 **`today_counts()`** returns `(denials_today, wastes_today, loggers_today)` over
 `log_date = today (UTC)`, and `/api/today` serves it unauthenticated. It duplicates
 nothing that `/api/kpi` cannot derive; its purpose is a line on the landing page
@@ -514,8 +541,15 @@ Base URL: `/api` (proxied by the SPA in dev; same origin in production).
 | GET | `/auth/nonce` | — | — | `{"nonce": "<32-hex>"}` (fresh, for the JS challenge) |
 | POST | `/auth/register` | — (bot-dissuaded) | JSON `AuthForm` | 201 `SessionUser` (session cookie set), or 400/409 |
 | POST | `/auth/login` | — (bot-dissuaded) | JSON `AuthForm` | 200 `SessionUser` (session cookie set), or 400/401 |
+| GET | `/health` | — | — | `{"status":"ok","database":"ok"}`, or **503** with `degraded` when the database cannot answer a query |
 | GET | `/auth/me` | ✓ | — | `SessionUser` or 401 |
 | POST | `/auth/logout` | ✓ | — | 303 redirect to `/` |
+
+`GET /health` is deliberately under `/api`, not at the root: before it existed, `GET
+/health` returned 200 on a broken database, because nothing matched the path and the SPA
+fallback served `index.html`. A status code that describes the app shell instead of the
+system is worse than no health check — a script watching it would report a dead site as
+healthy. This one round-trips a query and fails as 503.
 
 `AuthForm` (JSON body):
 ```json
@@ -875,8 +909,39 @@ Logging in has its own limiter, separate from the logging budgets above:
 
 | counter | ceiling | window |
 |---|---|---|
-| per username (case-insensitive) | 5 | 15 minutes |
-| per client address | 30 | 15 minutes |
+| per username (case-insensitive) | 5 | 15 minutes (sliding) |
+| per client address | 30 | 15 minutes (sliding) |
+
+And a third rule on top of the table: **the username's wait doubles with the day's
+failures.** Counted over 24h rather than the window, and applied only when the
+username counter is the one that tripped:
+
+| failures for this username in 24h | wait when refused |
+|---|---|
+| ≤ 8 | the sliding window (~15 minutes at most) |
+| 9 | 30 minutes |
+| 10 | 1 hour |
+| ≥ 11 | 2 hours (the ceiling) |
+
+- **Why 8 and not 5.** Five is the base allowance, so a rule that escalated the sixth
+  failure would spend its escalation on typos. Eight is past the point a person reaches
+  by mistyping, which is why the escalation is invisible to a forgetful user and
+  expensive for a script: at a flat window an attacker gets 5 guesses per 15 minutes
+  forever (~480/day), while with the escalation they are down to a handful and then
+  blocked for two hours at a time.
+- **Why a 2-hour ceiling.** There is no self-service password reset here, so a lockout
+  with no way back would be a worse failure than the guesses it prevents.
+- **Why the address does NOT escalate.** A cafe or household shares an address; one
+  attacker behind it must not lengthen the wait for everybody else at the table. The
+  address keeps its flat 30-per-window ceiling. `throttle_verdict` keys the escalation
+  on the username counter for exactly this reason, and it is asserted as a property
+  (`the_window_is_the_trigger_and_the_day_is_the_multiplier`).
+- **Refused attempts are not recorded.** A refusal that extended its own lockout would
+  let an attacker hold the account shut by continuing to knock.
+- **Every refusal is logged** at `WARN` with the username, the address, both counters and
+  the wait. Username and address are the only personal data this app writes to a log,
+  they are written here and nowhere else, and a refusal nobody can look up is a refusal
+  nobody can act on. See OPERATIONS §7 for where to read it and how long it stays.
 
 - **Checked before any password work.** A throttle that only fires after Argon2
   protects the account and not the machine; a guessing loop would still spend the
@@ -885,8 +950,10 @@ Logging in has its own limiter, separate from the logging budgets above:
   a throttle keyed only on real accounts would leave the enumeration path unlimited.
 - **Storage** is a table (`login_attempts`), not an in-process counter: the deploy
   restarts the API, and an attacker who can wait for a restart should not get their
-  budget back. Each insert prunes rows older than 4× the window for its own username
-  and address, so the table stays bounded with no scheduled job.
+  budget back. Each insert prunes rows older than 24h for its own username and address,
+  so the table stays bounded with no scheduled job. The horizon is the day, not the
+  window, because the escalation counts the day — pruning at the window would erase the
+  history that makes it escalate.
 - **The address** comes from `CF-Connecting-IP`, then the first `X-Forwarded-For` hop,
   then `unknown`. Only loopback can reach the listener (behind the tunnel), which is
   what makes those headers trustworthy here.
@@ -944,10 +1011,11 @@ Logging in has its own limiter, separate from the logging budgets above:
 ### 16.1 Backend (Rust)
 
 `backend/tests/integration.rs`, **48 tests**, all `#[sqlx::test(migrations = "./migrations")]`
-(creates a throwaway DB per test from the migrations), plus **20 unit tests** in
+(creates a throwaway DB per test from the migrations), plus **22 unit tests** in
 `src/*_tests.rs` (`cargo test --lib`) for the pure helpers: password hashing, the
 challenge proof, form timing, the session key derivation, the login throttle's
-arithmetic and the cookie naming.
+arithmetic (including the escalation curve) and the cookie naming. `backend/tests/routes.rs`
+adds **9 more** (§16.4), so `cargo test` is **79 tests**.
 
 1. `streak_calculation_basic` — no logs (0,0); one today (1,1).
 2. `streak_multiple_days` — 3-day run, gap, 7-day past run: current=3, longest=7.
@@ -982,9 +1050,9 @@ pinning test that cannot fail is decoration.
 
 ### 16.2 Frontend (Vitest)
 
-`web/src/lib/*.test.ts`, **93 tests across 11 files**. The new ones follow a rule the
-older ones established: logic that a page depends on is a PURE MODULE with its own
-test, so it can be exercised without a DOM (and without a browser-only test runner).
+`web/src/lib/*.test.ts`, **100 tests across 12 files**. They follow one rule: logic a
+page depends on is a PURE MODULE with its own test, so it can be exercised without a DOM
+(and without a browser-only test runner).
 
 - `api.test.ts` (12) — nonce/register/login payloads, error surfacing, timeAgo
   boundaries, formatCount padding.
@@ -1005,6 +1073,9 @@ test, so it can be exercised without a DOM (and without a browser-only test runn
 - `glossary.test.ts` (6) — the glossary is asserted as CONTENT: every required term
   present, no duplicates, each entry naming an enforcement point, and every internal
   link resolving to a route that exists on disk (item 12).
+- `decay.test.ts` (7) — the decay sentence, asserted as the STRING the dashboard
+  renders, on both sides of its threshold (quiet at 11 days, warning at 10), the
+  zero-day and already-wiped branches, and the singular "1 lifetime log" (item 16).
 
 ```bash
 cd web
@@ -1032,6 +1103,41 @@ pass was verified in a real browser against the live site instead (§21).
 Both notes are in the workflow file itself. A gate that overstates itself is worse
 than no gate, and the alternative — a red CI everyone learns to ignore — is worse
 still.
+
+---
+
+### 16.4 Router-level tests (`tests/routes.rs`)
+
+Nine tests that mount the real router (`.github/workflows/ci.yml` runs them with the
+rest of the suite) and send it HTTP requests.
+
+**Why they exist.** Every public page here reads a SQL function whose OUT list SQLx
+decodes by position, and this project has already served two 500s from exactly that — a
+`numeric` into `f64`, an `INT4` into `i64` — with the whole suite green. `integration.rs`
+asserts against the same assumptions the handlers make, so it cannot see a
+handler/JSON mismatch at all. These tests read the JSON body, which is the only shape
+that notices.
+
+To mount the real surface the router had to stop living in `main.rs`, which is the only
+reason `router.rs` exists.
+
+| test | what it pins |
+|---|---|
+| `health_reports_the_database` | `/api/health` is 200/`ok` — a health check that can fail |
+| `an_unknown_api_path_404s_rather_than_serving_the_app` | a missing endpoint is not a 200 page |
+| `every_leaderboard_period_decodes_and_answers` | four periods, the two that 500'd |
+| `the_public_feed_has_no_note_field_while_the_note_survives_in_the_table` | item 01 at the JSON layer, with the row still holding the note |
+| `today_counts_decode_positionally` | three numbers, in order |
+| `the_kpi_page_decodes_every_column` | nine columns with a `double precision` in the middle |
+| `register_then_me_round_trips_a_session` | the cookie register sets, on an authenticated route |
+| `a_persistent_guesser_waits_longer_than_a_typo` | the escalation reaches the client as `Retry-After` |
+| `stats_reports_the_budget_and_the_decay_countdown` | the numbers the dashboard renders are the ones the server enforces |
+
+Two of them were broken on purpose before being trusted: re-adding a `note` field to the
+feed DTO reddens exactly the feed test (and prints the leaked payload), and making
+`escalating_lockout_secs` return `None` reddens exactly the escalation test with
+"must escalate past the 15-minute window, got 899". Both were then restored and the
+suite re-run green — the restore step is as load-bearing as the mutation.
 
 ---
 

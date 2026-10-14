@@ -3,9 +3,15 @@
 #
 # A backup nobody has restored is a hypothesis. This script restores the newest
 # dump (or one you name) into `streakforge_restore_check`, prints the row counts
-# of the three tables that matter, and leaves the database in place so a human
-# can look at it. Run it after any migration and after any change to
-# scripts/backup-db.sh.
+# of the tables that matter, and leaves the database in place so a human can look
+# at it. Run it after any migration and after any change to scripts/backup-db.sh.
+#
+# It is also the only thing that notices a BROKEN BACKUP CRON. A dump that stops
+# being written looks exactly like a healthy system from the outside: nothing
+# errors, nothing is missing, and the day you need the dump is the day you find
+# out. So the newest dump's age is checked, and a dump older than
+# MAX_DUMP_AGE_HOURS (default 48) fails the run. That check is the reason this
+# script is installed on a monthly timer rather than left to whoever remembers.
 #
 # It never touches the live database: the target is dropped and recreated by
 # name, and the script refuses to run if that name is the live one.
@@ -59,7 +65,20 @@ if [ -z "$DUMP" ] || [ ! -f "$DUMP" ]; then
 fi
 DUMP="$(readlink -f "$DUMP")"
 
+# Freshness first: everything below this line proves the dump is restorable, and
+# none of it means anything if the dump is three weeks old and the backup cron
+# died three weeks ago.
+MAX_DUMP_AGE_HOURS="${MAX_DUMP_AGE_HOURS:-48}"
+DUMP_AGE_HOURS=$(( ( $(date +%s) - $(stat -c %Y "$DUMP") ) / 3600 ))
+if [ "$DUMP_AGE_HOURS" -gt "$MAX_DUMP_AGE_HOURS" ]; then
+  echo "FATAL: the newest dump is ${DUMP_AGE_HOURS}h old (limit ${MAX_DUMP_AGE_HOURS}h)." >&2
+  echo "       That is not a rehearsal failure, it is a BACKUP failure: check" >&2
+  echo "       whether the nightly cron still runs, then look at cron.log." >&2
+  exit 1
+fi
+
 echo "==> rehearsing: $DUMP"
+echo "    dump age:       ${DUMP_AGE_HOURS}h (limit ${MAX_DUMP_AGE_HOURS}h)"
 echo "    live database:  $LIVE_DB (untouched)"
 echo "    scratch target: $TARGET"
 
@@ -96,4 +115,18 @@ if [ "$LIVE_COUNTS" != "$RESTORED_COUNTS" ]; then
   echo "      compare the dumped day against the backup's timestamp before worrying." >&2
 fi
 
+# A dump taken before the newest migration restores perfectly and is still the
+# wrong artefact to rely on: it is how a rehearsal reported "migrations 10" on a
+# tree with 11 and passed. Not a failure (the nightly job will catch up), but it
+# has to be visible in the log rather than discovered by hand.
+LIVE_MIGRATIONS="$(PGDATABASE="$LIVE_DB" psql -At -c 'select count(*) from _sqlx_migrations')"
+RESTORED_MIGRATIONS="$(PGDATABASE="$TARGET" psql -At -c 'select count(*) from _sqlx_migrations')"
+if [ "$LIVE_MIGRATIONS" != "$RESTORED_MIGRATIONS" ]; then
+  echo "WARN: migrations live=$LIVE_MIGRATIONS restored=$RESTORED_MIGRATIONS — this dump" >&2
+  echo "      predates the current schema. Restorable, but not today's shape." >&2
+fi
+
+# One line a cron log can be read for at a glance, and the only line that says
+# the whole rehearsal succeeded.
+echo "REHEARSAL OK: $(basename "$DUMP") (${DUMP_AGE_HOURS}h old) -> $TARGET | profiles $RESTORED_COUNTS | migrations $RESTORED_MIGRATIONS"
 echo "==> restore rehearsal complete. Scratch database '$TARGET' left in place."

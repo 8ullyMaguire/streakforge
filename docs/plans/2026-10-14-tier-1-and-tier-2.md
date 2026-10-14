@@ -220,3 +220,32 @@ null for a user with no logs; the dashboard notice is covered by a component tes
 Done means: the suite is green, every acceptance line above has been run and its output
 recorded, the deploy's own health checks pass, and the four items that need a real live
 behaviour (01, 02, 10, 14) have been exercised on `streakforge.polarisocial.xyz`.
+
+---
+
+## Follow-up audit, same day: five acceptance lines were weaker than the idea
+
+Every line above was run and passed. Then each of the 16 ideas was re-read against the
+code, and five items had shipped a reduced version of what was asked, with the plan's own
+acceptance line quietly accepting the reduction. Recorded here rather than silently
+fixed, because the pattern is the point: **the plan is where an idea's requirement can
+get lost, and it is the document nobody re-reads once it is green.**
+
+| # | the idea asked for | the plan accepted | now |
+|---|---|---|---|
+| 03 | nightly dump **plus a monthly restore rehearsal** | "run both scripts for real" — the rehearsal was a script someone had to remember | cron entry, 1st at 04:30; fails on a dump older than 48h, so it also detects a dead backup job |
+| 06 | back off **exponentially** after 5, and log the event | a flat 15-minute window, no log line | doubles past 8 failures/day for that username (30m/1h/2h cap) and logs every refusal; the address deliberately does not escalate |
+| 09 | a test that **calls activity_feed and decodes every column** | a signature comparison (which catches schema drift but not a handler/JSON mismatch) | nine tests through the real router that read the response body — which is why the HTTP surface moved out of `main.rs` into `router.rs` |
+| 12 | linked from **the empty states and the doctrine index** | linked from the footer | both, plus the doctrine page |
+| 16 | notice at day 20, day 28 and on return; "covered by a component test" | the copy was inline markup that no test could reach | `decay.ts` + seven tests asserting the sentences, on both sides of the threshold |
+
+**And one thing found while auditing, worse than any of them**: `GET /health` returned
+200 with `index.html` on a broken database, because no such route existed and the SPA
+fallback answers everything. A status code that describes the app shell is worse than no
+health check — a monitor watching it would report a dead site as healthy. There is now a
+real `/api/health` that round-trips a query and answers 503.
+
+Gates for the follow-up: `cargo test` 22 unit + 48 integration + 9 route; vitest 100 in
+12 files; `svelte-check` 0/0; `vite build` green. Three new tests were broken on purpose
+before being trusted (the feed DTO, the escalation, the decay threshold); each reddened
+exactly one test, naming the defect, and the suite went green again once restored.

@@ -68,8 +68,12 @@ Plus `STATUS.md` for the living dev-status checklist.
   silence would wipe the score, and explains the score by its components.
 - **Deep-link logging** — `/log?kind=habit|denial|affirmation&note=…` records in one
   tap from a phone shortcut, including the signed-out path through `/login?next=`.
+- **A health check that can fail** — `/api/health` round-trips a query and answers 503
+  when the database cannot, which `/health` never did (there was no such route: the SPA
+  fallback answered 200 with `index.html`).
 - **Glossary and terms** — `/glossary` defines every noun the score is made of, each
-  entry naming where the rule is enforced; `/terms` states what is public, what is
+  entry naming where the rule is enforced, and is linked from the empty states and the
+  doctrine index; `/terms` states what is public, what is
   private, and that the 18+ notice is an acknowledgement rather than an age check.
 - **Profiles** — public username, display name, avatar (DiceBear fallback),
   stats. Editable in Settings.
@@ -190,6 +194,7 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | GET    | `/api/user-of-the-day`    | —    | Today's top user                     |
 | GET    | `/api/total`              | —    | Total completions (hero counter)     |
 | GET    | `/api/today`              | —    | Today's denials / wastes / distinct loggers (UTC) |
+| GET    | `/api/health`             | —    | `{status, database}`; **503** when the DB cannot answer |
 | GET    | `/api/feed`               | —    | Public feed (cursor + limit) — activity only, no notes |
 | GET    | `/api/profile/{username}` | —    | Public profile stats (+ social_url)  |
 | PATCH  | `/api/profile`            | ✓    | Update username/display/avatar/social_url |
@@ -220,6 +225,9 @@ with `row_number()` grouping).
 - **Failed logins have their own throttle** (5 per username, 30 per address, per 15
   minutes), checked before any password hashing, in a table so an API restart does not
   reset it. A successful sign-in clears that username's failures, not the address's.
+  Past eight failures in a day for one username the wait doubles (30m, 1h, then a 2h
+  ceiling), and every refusal is logged with the username and address — see SPEC §14.1
+  and OPERATIONS §4.1. The address never escalates: a cafe shares it.
 
 ### The score (Whiteboi Devotion Index)
 
@@ -250,7 +258,8 @@ day, then all-time total. See `user_of_the_day()` in `0002_leaderboards.sql`.
 cd backend
 DATABASE_URL=postgres://<role>:<pw>@127.0.0.1:5432/<any-db> cargo test
 
-# 68 tests: 20 unit + 48 integration. Each integration test creates and drops its
+# 79 tests: 22 unit + 48 integration + 9 that drive the real router (tests/routes.rs).
+# Each DB-backed test creates and drops its
 # own scratch database (sqlx::test), so DATABASE_URL is a maintenance connection
 # rather than a fixture schema -- point it at any database the role can reach.
 #
@@ -301,7 +310,13 @@ is never silently clamped to 0, which would lock every user out of logging.
   `STREAKFORGE_SESSION_SECRET` / `STREAKFORGE_DB_PASSWORD`); rotate them on
   thinkcentre after deploy (see OPERATIONS.md §3.1).
 - Build the frontend with a plain `npm run build` (no dev-login variant exists).
-- Set `SECURE_COOKIES=1` behind HTTPS.
+- Set `SECURE_COOKIES=1` behind HTTPS (the deploy does it, and it renames the cookie to
+  `__Host-streakforge_session`, which signs everyone out exactly once).
+- **Backups**: the deploy installs two cron entries — a nightly `pg_dump` at 03:30 and a
+  restore rehearsal on the 1st at 04:30. The rehearsal is the half that makes the backup
+  real, and it is also what notices if the nightly job stops running (it fails when the
+  newest dump is over 48h old). Details in OPERATIONS.md §6.
+- Health: check `/api/health` (200 `ok`, 503 `degraded`), not `/health` and not `/`.
 - Rate limiting is DB-query based (simple, reliable for v1); a Redis sliding window
   can replace it later.
 

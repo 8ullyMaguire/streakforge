@@ -5,6 +5,7 @@
 	import LogButton from '$lib/components/LogButton.svelte';
 	import StreakCalendar from '$lib/components/StreakCalendar.svelte';
 	import { budgetLabel } from '$lib/countdown';
+	import { decayNotice, decayStyle } from '$lib/decay';
 
 	let stats = $state<Stats | null>(null);
 	let error = $state<string | null>(null);
@@ -12,6 +13,10 @@
 	// countdown to this so the remaining seconds tick down from the server's
 	// number instead of trusting the browser clock to agree with it.
 	let receivedAt = $state(Date.now());
+	// The decay sentence, from a module with its own tests: the copy is the only
+	// explanation of the 30-day rule a user ever sees, so it is asserted rather
+	// than written inline where nothing can reach it.
+	let decay = $derived(stats ? decayNotice(stats.devotion) : null);
 
 	// Ticks slowly so the budget line's "resets in 4h 12m" stays honest without
 	// a reload. 30s, not 1s: the label is in minutes, and a per-second interval
@@ -123,42 +128,14 @@
 			</div>
 
 			<!--
-				Decay + lifetime. A score with no explanation reads as a bug when it
+				Decay + lifetime, in three states: wiped, counting down (ten days or
+				fewer), and quiet. A score with no explanation reads as a bug when it
 				drops, so say plainly WHY it is what it is: 30 days of silence wipes
-				the score, and the record survives separately.
+				the score, and the record survives separately. The sentences live in
+				$lib/decay.ts, where `decay.test.ts` asserts them.
 			-->
-			{#if stats.devotion.decayed}
-				<div
-					style="margin-top:10px;padding:9px 11px;border-radius:8px;background:rgba(227,28,35,0.10);border:1px solid rgba(227,28,35,0.35);font-size:12px;line-height:1.5;color:var(--red-soft);"
-				>
-					Score wiped — 30 days without a log. Your record of
-					<span style="color:var(--text);font-weight:600;">{stats.devotion.lifetime_total}</span>
-					lifetime log{stats.devotion.lifetime_total === 1 ? '' : 's'} is intact, but the score resets with
-					the next log you make.
-				</div>
-			{:else if stats.devotion.days_until_decay !== null && stats.devotion.days_until_decay <= 10}
-				<!--
-					Item 16: the decay used to be silent. A user found out by
-					returning to a zero, which reads as the site having lost their
-					score rather than as a rule they can act on. Ten days is late
-					enough to be about the real state and early enough to log once.
-				-->
-				<div
-					style="margin-top:10px;padding:9px 11px;border-radius:8px;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.35);font-size:12px;line-height:1.5;color:var(--gold);"
-				>
-					{#if stats.devotion.days_until_decay === 0}
-						Your score resets today — it has been 30 days.
-					{:else}
-						Your score resets in {stats.devotion.days_until_decay}
-						{stats.devotion.days_until_decay === 1 ? 'day' : 'days'}.
-					{/if}
-					One log keeps the era alive.
-				</div>
-			{:else}
-				<div style="margin-top:8px;font-size:12px;color:var(--text-dim);">
-					lifetime <span style="color:var(--text);">{stats.devotion.lifetime_total}</span> logs
-					<span style="opacity:0.75;">· score resets if you go 30 days without logging</span>
-				</div>
+			{#if decay}
+				<div style={decayStyle(decay.kind)}>{decay.text}</div>
 			{/if}
 		</div>
 
@@ -217,6 +194,10 @@
 				<div class="empty">
 					<div class="big">🔥</div>
 					No logs yet — hit the button!
+					<div style="font-size:12px;margin-top:10px;">
+						New here? The <a href="/glossary">glossary</a> defines WLW, WLD, a denial,
+						a drill rep, and what the score is made of.
+					</div>
 				</div>
 			{:else}
 				{#each stats.recent_logs as item}

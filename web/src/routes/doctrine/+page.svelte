@@ -46,7 +46,10 @@
 <div class="container" style="padding-top:28px;">
 	<h1 style="font-size:24px;letter-spacing:0.04em;margin:0 0 4px;">THE DOCTRINE</h1>
 	<p style="color:var(--text-dim);font-size:14px;margin:0 0 20px;">
-		Doctrine. Commandments. Training. The collected texts.
+		Doctrine. Commandments. Training. The collected texts. For the vocabulary the
+		texts assume — WLW, WLD, a denial, a drill rep, the devotion index — the
+		<a href="/glossary">glossary</a> defines each one and names the rule that
+		enforces it.
 	</p>
 
 	{#if error && docs.length === 0}

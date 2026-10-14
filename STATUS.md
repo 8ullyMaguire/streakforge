@@ -1,5 +1,44 @@
 # StreakForge — Development Status
 
+## 2026-10-14 (evening) — the tier 1+2 audit: five gaps between the ideas and the code
+
+The first tier 1+2 pass shipped 16 items. This pass re-read each of the 16 ideas against
+what actually landed, and found five places where the plan had shipped a weaker version
+than the idea asked for. All five are now closed. None of them were bugs a user would
+have reported, which is exactly why they needed looking for.
+
+- **06 asked for exponential backoff**; the plan shipped a flat 15-minute window. An
+  attacker got 5 guesses per 15 minutes forever. Now the wait doubles past eight
+  failures in a day (30m / 1h / 2h cap) for that username, and every refusal is logged
+  with the username and address. The address deliberately does NOT escalate — a cafe
+  shares it.
+- **06 also asked to log the event.** It did not. It does now, and OPERATIONS §4.1 says
+  where to read it, why it is the only personal data the app logs, and what a flood means.
+- **03 asked for a *monthly* restore rehearsal.** Only the nightly dump was on a timer;
+  the rehearsal was a script someone had to remember. It is now a cron entry on the 1st at
+  04:30, and it fails when the newest dump is over 48h old — which makes it the only
+  thing that notices the backup job has died.
+- **09 asked for a test that *decodes* the feed's columns.** The pinning test compared
+  SQL signatures, which catches schema drift but cannot see a handler/JSON mismatch —
+  the exact shape of the two 500s this project has had. There are now nine tests that
+  mount the real router and read the response body; to do that the HTTP surface moved
+  from `main.rs` to `router.rs`.
+- **12 asked for the glossary to be linked from the empty states and the doctrine
+  index.** It was in the footer only. Now both, plus the doctrine page.
+- **And one thing that was worse than missing**: `GET /health` returned 200 on a broken
+  database, because no such route existed and the SPA fallback served `index.html`. A
+  status code describing the app shell is worse than no health check. There is now a real
+  `/api/health` that round-trips a query and answers 503.
+- **16's plan line claimed the decay notice was "covered by a component test"** while the
+  copy lived inline in the template where no test could reach it. The three sentences now
+  live in `web/src/lib/decay.ts` with seven tests asserting the strings themselves, on
+  both sides of the ten-day threshold.
+
+**Gates**: `cargo test` 22 lib + 48 integration + 9 route (79); `vitest run` 100 across 12
+files; `svelte-check` 0/0; `vite build` green. Three of the new tests were broken on
+purpose before being trusted (the feed DTO, the escalation, the decay threshold), each
+reddening exactly one test with the defect named, then restored and re-run green.
+
 ## 2026-10-14 — tier 1 and tier 2 of the ranked 100 (`91fc795`)
 
 Sixteen items from `docs/100_IDEAS.md` — everything scoring ≥ 2.5 — shipped in one
@@ -39,7 +78,7 @@ plus the unknown-kind fallback.
 **Gates**: backend `cargo test` 20 lib + 48 integration; frontend 93 vitest across 11
 files, `svelte-check` 0/0, `vite build` green. Deploy: 15/15 health checks 200.
 
-Last updated: 2026-10-14
+Last updated: 2026-10-14 (evening pass)
 
 ## 2026-09-28 — the `wip/recover-2026-08-work` review
 

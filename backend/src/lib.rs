@@ -7,6 +7,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod manifesto;
+pub mod router;
 
 use config::Config;
 use sqlx::PgPool;

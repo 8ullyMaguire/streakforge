@@ -5,8 +5,10 @@
 
 use crate::auth::{
     challenge_proof_valid, client_ip, compute_challenge_proof, fresh_nonce, hash_password,
-    session_cookie_name, throttle_verdict, verify_password, AuthForm, LOGIN_MAX_PER_IP,
-    LOGIN_MAX_PER_USERNAME, LOGIN_WINDOW_SECS, FORM_MAX_OPEN_MS, FORM_MIN_OPEN_MS,
+    escalating_lockout_secs, session_cookie_name, throttle_verdict, verify_password, AuthForm,
+    LOGIN_ATTEMPT_KEEP_SECS, LOGIN_ESCALATE_AFTER, LOGIN_MAX_LOCKOUT_SECS, LOGIN_MAX_PER_IP,
+    LOGIN_MAX_PER_USERNAME,
+    LOGIN_WINDOW_SECS, FORM_MAX_OPEN_MS, FORM_MIN_OPEN_MS,
 };
 
 // ---- Session cookie naming -------------------------------------------------
@@ -27,14 +29,14 @@ fn host_prefix_applies_only_when_the_cookie_is_secure() {
 #[test]
 fn throttle_allows_below_the_ceiling_and_blocks_at_it() {
     // Last allowed attempt: one under the limit.
-    assert_eq!(throttle_verdict(LOGIN_MAX_PER_USERNAME - 1, 0, Some(120)), None);
+    assert_eq!(throttle_verdict(LOGIN_MAX_PER_USERNAME - 1, 0, Some(120), 0), None);
     // The attempt that trips it.
-    assert!(throttle_verdict(LOGIN_MAX_PER_USERNAME, 0, Some(120)).is_some());
+    assert!(throttle_verdict(LOGIN_MAX_PER_USERNAME, 0, Some(120), 0).is_some());
     // The IP ceiling is independent and higher: five failures — enough to trip
     // one username — must NOT block the address, or a shared household or cafe
     // would lock out everyone at the first guesser's fifth try.
-    assert_eq!(throttle_verdict(0, LOGIN_MAX_PER_USERNAME, Some(120)), None);
-    assert!(throttle_verdict(0, LOGIN_MAX_PER_IP, Some(120)).is_some());
+    assert_eq!(throttle_verdict(0, LOGIN_MAX_PER_USERNAME, Some(120), 0), None);
+    assert!(throttle_verdict(0, LOGIN_MAX_PER_IP, Some(120), 0).is_some());
     assert!(LOGIN_MAX_PER_IP > LOGIN_MAX_PER_USERNAME);
 }
 
@@ -42,13 +44,47 @@ fn throttle_allows_below_the_ceiling_and_blocks_at_it() {
 fn throttle_never_reports_zero_seconds() {
     // `Retry-After: 0` invites an immediate retry that is refused again, which
     // reads as a broken client contract rather than as a wait.
-    let blocked = throttle_verdict(99, 0, None).expect("over the ceiling is blocked");
+    let blocked = throttle_verdict(99, 0, None, 0).expect("over the ceiling is blocked");
     assert!(blocked >= 1, "a blocked verdict must report at least one second");
-    let blocked = throttle_verdict(99, 0, Some(0)).expect("still blocked");
+    let blocked = throttle_verdict(99, 0, Some(0), 0).expect("still blocked");
     assert_eq!(blocked, 1);
     // With no row left to time the window from, the full window is the answer.
-    let blocked = throttle_verdict(99, 0, None).unwrap();
+    let blocked = throttle_verdict(99, 0, None, 0).unwrap();
     assert_eq!(blocked, LOGIN_WINDOW_SECS);
+}
+
+#[test]
+fn the_lockout_doubles_past_the_days_allowance_of_typos() {
+    // Up to the day's allowance: no escalation at all. Five is what a person
+    // reaches by mistyping, so the sixth failure is not treated as hostile --
+    // the base window already answers it.
+    for n in 0..=LOGIN_ESCALATE_AFTER {
+        assert_eq!(escalating_lockout_secs(n), None, "{n} failures is still typo territory");
+    }
+    // Past it: double the base window each time, then hold at the ceiling.
+    assert_eq!(escalating_lockout_secs(9), Some(LOGIN_WINDOW_SECS * 2));
+    assert_eq!(escalating_lockout_secs(10), Some(LOGIN_WINDOW_SECS * 4));
+    assert_eq!(escalating_lockout_secs(11), Some(LOGIN_MAX_LOCKOUT_SECS));
+    // A cap is the point: this password has no self-service reset, so a lockout
+    // with no way back would be a worse failure than the guesses it prevents.
+    assert_eq!(escalating_lockout_secs(40), Some(LOGIN_MAX_LOCKOUT_SECS), "the wait is capped");
+    assert!(LOGIN_MAX_LOCKOUT_SECS <= LOGIN_ATTEMPT_KEEP_SECS);
+}
+
+#[test]
+fn the_window_is_the_trigger_and_the_day_is_the_multiplier() {
+    // Under the window, a persistent day does NOT block on its own: the
+    // escalation lengthens a refusal, it never invents one.
+    assert_eq!(throttle_verdict(1, 0, None, 40), None);
+    // Over the window on a clean day: the sliding window answers.
+    assert_eq!(throttle_verdict(LOGIN_MAX_PER_USERNAME, 0, Some(120), 5), Some(120));
+    // Over the window after a persistent day: the escalation answers instead,
+    // and it is the longer of the two numbers.
+    assert_eq!(throttle_verdict(LOGIN_MAX_PER_USERNAME, 0, Some(120), 11), Some(LOGIN_MAX_LOCKOUT_SECS));
+    assert_eq!(throttle_verdict(LOGIN_MAX_PER_USERNAME, 0, Some(0), 9), Some(LOGIN_WINDOW_SECS * 2));
+    // An address stays on the plain window: a cafe shares it, so escalating it
+    // would punish the neighbours for one attacker. Only the username escalates.
+    assert_eq!(throttle_verdict(0, LOGIN_MAX_PER_IP, Some(120), 40), Some(120));
 }
 
 #[test]

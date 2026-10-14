@@ -1008,6 +1008,35 @@ pub async fn get_today(State(state): State<AppState>) -> ApiResult<Json<TodayRes
     }))
 }
 
+// ---- Health ----
+
+/// A health check that can fail.
+///
+/// Before this existed, `GET /health` returned 200 on a broken database: nothing
+/// matched the path, so the SPA fallback served index.html and the status was a
+/// cheerful 200 describing nothing. A check that cannot fail is not a check, so
+/// this one round-trips a query and reports the failure as 503.
+pub async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
+    let db_up = sqlx::query_scalar::<_, i32>("select 1")
+        .fetch_one(&state.pool)
+        .await
+        .is_ok();
+    let status = if db_up { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    (
+        status,
+        Json(HealthResponse {
+            status: if db_up { "ok" } else { "degraded" },
+            database: if db_up { "ok" } else { "unreachable" },
+        }),
+    )
+}
+
+#[derive(Debug, Serialize)]
+pub struct HealthResponse {
+    pub status: &'static str,
+    pub database: &'static str,
+}
+
 // ---- Feed ----
 
 pub async fn get_feed(

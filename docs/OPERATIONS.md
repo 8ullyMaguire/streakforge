@@ -234,7 +234,10 @@ From any machine on the LAN:
 # Service + port
 ssh thinkcentre 'systemctl is-active streakforge; ss -tln | grep 8001'
 
-# HTTP health (local)
+# HTTP health (local) — /api/health is the one that can FAIL: it round-trips a
+# query and answers 503 when the database cannot. Do not use /health (it does
+# not exist) or / (the SPA shell answers 200 whatever is behind it).
+curl -s http://127.0.0.1:8001/api/health
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8001/
 curl -s http://127.0.0.1:8001/api/total
 
@@ -246,13 +249,38 @@ curl -s https://streakforge.polarisocial.xyz/api/auth/nonce   # expect {"nonce":
 ssh thinkcentre 'sudo journalctl -u streakforge -n 50 --no-pager'
 ```
 
-Manual QA account (live 2026-08-10): `sample_user` / `SamplePass123!` —
-register/login/me/logout all verified against the public URL. Delete the row
-from `profiles` when it's no longer needed.
+There is no standing QA account. One existed in August 2026 with its password written
+into this file; it has been deleted from the database and the line is gone from this
+document, so the copy in git history is inert. If a probe account is needed, create a
+throwaway one and delete it in the same session — a live account whose password sits in
+a repository is a credential, not a fixture.
 
-Expected healthy: service `active`; root 200; `/api/total` returns `{"total":N}`;
-port 8001 listening. Unknown `/api/*` paths return 404 (they do **not** fall
-through to the SPA shell).
+Expected healthy: service `active`; `/api/health` returns `{"status":"ok"}`; root 200;
+`/api/total` returns `{"total":N}`; port 8001 listening. Unknown `/api/*` paths return
+404 (they do **not** fall through to the SPA shell).
+
+### 4.1 Throttled sign-ins, and how to read them
+
+Every refused sign-in writes one `WARN` line to the journal with the username, the
+address, both counters and the wait:
+
+```bash
+ssh thinkcentre 'sudo journalctl -u streakforge -n 100 --no-pager | grep "sign-in refused"'
+```
+
+- **This is the only place the app writes personal data to a log.** The username and the
+  address appear here and nowhere else; there is no request log, no analytics and no
+  error tracker. That is deliberate — a refusal nobody can look up is a refusal nobody
+  can act on, and one line per refusal is the smallest amount of logging that answers
+  the question "is somebody guessing".
+- **Retention is the journal's** (systemd's own limits, typically a few weeks or a size
+  cap), not the app's.
+- **A flood is the signal.** A handful of lines a day is somebody who forgot their
+  password. Hundreds, from one address or against one username, is an attack: the
+  escalation in SPEC §14.1 already lengthens their wait to two hours, and the address
+  can be blocked at the Cloudflare edge.
+- **Refused attempts are deliberately NOT recorded in the database**, so an attacker
+  cannot hold an account shut by continuing to knock.
 
 ---
 
@@ -320,7 +348,7 @@ nightly dumps, and a rehearsal that proves they restore.
 | | |
 |---|---|
 | Script | `scripts/backup-db.sh` (deployed to `/opt/streakforge/backup-db.sh`) |
-| When | 03:30 daily, from the cron entry the deploy installs |
+| When | 03:30 daily, from the cron entry the deploy installs (the deploy prints both entries it manages) |
 | Where | `~/backups/streakforge/streakforge-YYYY-MM-DD.dump` (`pg_dump -Fc`) |
 | Kept | 14 dailies; the 1st of each month is kept as a monthly copy, 6 of those |
 | Log | `~/backups/streakforge/cron.log` — one line per run, with the size and the kept count |
@@ -358,6 +386,30 @@ It drops and recreates the target (`streakforge_restore_check` by default), rest
 into it, prints row counts, and compares `profiles` against the live database. It
 refuses to run if the target name equals the live database's name.
 
+**It is on a timer, not on memory**: the deploy installs
+
+```
+30 4 1 * *  /opt/streakforge/restore-db.sh >> ~/backups/streakforge/rehearsal.log 2>&1
+```
+
+— the 1st of the month at 04:30, an hour after the 03:30 dump so a rehearsal can never
+race the backup it is checking. Read the verdict with:
+
+```bash
+ssh thinkcentre 'grep "REHEARSAL OK" ~/backups/streakforge/rehearsal.log | tail -3'
+```
+
+**It is also the only thing that notices the backup job has died.** A dump that stops
+being written looks exactly like a healthy system from the outside: nothing errors,
+nothing is missing, and the day you need the dump is the day you find out. So the
+rehearsal checks the newest dump's age first and FAILS (exit 1) when it is older than
+`MAX_DUMP_AGE_HOURS` (48) — which is a backup failure, not a rehearsal failure, and the
+message says so. A rehearsal that fails is meant to be looked at:
+
+```bash
+ssh thinkcentre 'tail -20 ~/backups/streakforge/rehearsal.log'
+```
+
 **A backup nobody has restored is a hypothesis.** Last run, 2026-10-14 (after
 migration 0011):
 
@@ -373,7 +425,12 @@ size looks wrong.
 
 - **The host itself.** These dumps are on the same machine as the database. A lost
   ThinkCentre still loses everything; off-host copies are the next step (SPEC §27).
-- **The rehearsal is manual.** Nothing runs `restore-db.sh` on a schedule yet.
+  A rehearsal cannot fix this: it proves the dump is restorable, not that it survives
+  the building.
+- **A dump older than the newest migration** is restorable and still the wrong
+  artefact. The rehearsal warns about it (`migrations live=N restored=M`) rather than
+  failing, because the nightly job is what closes that gap — but it is a line to read,
+  not to skip.
 - Static content (manifestos, frontend build) is in the repo and rebuilt from source.
 
 ### 6.4 Other copies

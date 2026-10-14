@@ -15,6 +15,14 @@ SQL. What the 16 items turned into is recorded in SPEC §3.6, §7.2, §7.4, §7.
 §15, §16 and §17; the honest summary is that four of them (01, 11, 13, 16) changed
 what the site measures, and the other twelve changed what it tells you.
 
+**A second pass on 2026-10-14 re-read all 16 against what actually landed** and found
+five places where the implementation was weaker than the idea: 03's rehearsal was not on
+a timer, 06's backoff was flat and unlogged, 09's test compared signatures instead of
+decoding, 12's glossary was not linked from the empty states, and `GET /health` was a 200
+from the SPA fallback rather than a health check. All five are closed; the detail is in
+SPEC §14.1, §16.4 and §21. The lesson is worth keeping: **an idea's text is the
+requirement, and a plan that ships a reduced version of it has to say so out loud.**
+
 Nothing below rank 16 was started. Ranks 17–20 are the next candidates by score, and
 the note at the bottom of this file still stands: the strategic bets (the keyholder,
 the lock seal) score low here **because effort is the denominator** — that is the
@@ -25,16 +33,16 @@ ranking working, not the ideas being weak.
 | ~~01~~ | ~~9.0~~ | ~~Stop publishing log notes to the anonymous feed~~ **SHIPPED** | 9 | 1 | S | Privacy |
 | 01 | **9.0** | Stop publishing log notes to the anonymous feed | 9 | 1 | S | Privacy |
 | 02 | **6.0** | Set Secure and the __Host- prefix on the session cookie **— SHIPPED** | 6 | 1 | S | Privacy |
-| 03 | **5.0** | Back up the production database **— SHIPPED** (and rehearsed) | 10 | 2 | S | Ops |
+| 03 | **5.0** | Back up the production database **— SHIPPED** (nightly, and rehearsed monthly on a timer) | 10 | 2 | S | Ops |
 | 04 | **5.0** | robots.txt and a sitemap.xml **— SHIPPED** | 5 | 1 | S | SEO |
 | 05 | **3.5** | CI: run the gate on every push **— SHIPPED** (fmt advisory, clippy errors-only) | 7 | 2 | S | Ops |
-| 06 | **3.5** | Throttle failed logins per account and per IP **— SHIPPED** | 7 | 2 | S | Auth |
+| 06 | **3.5** | Throttle failed logins per account and per IP **— SHIPPED** (doubling past 8/day, 2h cap, every refusal logged) | 7 | 2 | S | Auth |
 | 07 | **3.0** | Add Open Graph and Twitter meta tags **— SHIPPED** (static, honestly so) | 6 | 2 | S | Growth |
 | 08 | **3.0** | An 18+ interstitial and a clear terms line **— SHIPPED** (an acknowledgement, and it says so) | 6 | 2 | S | Compliance |
-| 09 | **3.0** | Pin activity_feed's column list with a test **— SHIPPED** (five functions, broken on purpose to prove it) | 6 | 2 | S | Ops |
+| 09 | **3.0** | Pin activity_feed's column list with a test **— SHIPPED** (five signatures pinned, plus nine router-level tests that decode the JSON) | 6 | 2 | S | Ops |
 | 10 | **3.0** | Who denied today: a live same-day counter **— SHIPPED** (`/api/today`) | 6 | 2 | S | Social |
 | 11 | **2.67** | Score by day, not by row, now that a day can hold five logs **— SHIPPED** | 8 | 3 | M | Scoring |
-| 12 | **2.5** | A glossary for the language **— SHIPPED** (17 terms, each naming its enforcement) | 5 | 2 | S | Content |
+| 12 | **2.5** | A glossary for the language **— SHIPPED** (17 terms, each naming its enforcement, linked from the empty states) | 5 | 2 | S | Content |
 | 13 | **2.5** | Anti-sybil: account age before a board appearance **— SHIPPED** (24h) | 5 | 2 | S | Scoring |
 | 14 | **2.5** | Log from a deep link or one-key URL **— SHIPPED** (`/log?kind=`) | 5 | 2 | S | Streaks |
 | 15 | **2.5** | Show the day's remaining budget and the clock together **— SHIPPED** | 5 | 2 | S | Streaks |

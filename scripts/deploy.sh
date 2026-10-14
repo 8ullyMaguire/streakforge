@@ -123,20 +123,29 @@ StandardError=journal
 WantedBy=multi-user.target
 UNIT
 
-echo "==> 5b/6 Installing the nightly backup cron entry"
-# 03:30 local. Idempotent: the old line is removed before the new one is added,
-# so re-running a deploy does not stack duplicate jobs (the classic way a host
-# ends up running the same backup four times a night).
+echo "==> 5b/6 Installing the backup and rehearsal cron entries"
+# Two jobs: the nightly dump at 03:30, and the restore rehearsal on the 1st at
+# 04:30 — an hour after the dump, so a rehearsal can never race the backup it is
+# checking. The rehearsal is what turns "we have backups" into "the last backup
+# restored", and it is also the only job that notices the dump job has died
+# (restore-db.sh fails when the newest dump is older than 48 hours).
+#
+# Idempotent: both old lines are removed before the new ones are added, so
+# re-running a deploy does not stack duplicate jobs (the classic way a host ends
+# up running the same backup four times a night).
 ssh "$HOST" 'bash -s' <<REMOTE
 set -e
 mkdir -p "\$HOME/backups/streakforge"
 chmod 700 "\$HOME/backups/streakforge"
-LINE="30 3 * * * $BIN_DIR/backup-db.sh >> \$HOME/backups/streakforge/cron.log 2>&1"
-crontab -l 2>/dev/null | grep -v 'streakforge/backup-db.sh\|/opt/streakforge/backup-db.sh' > /tmp/cron.streakforge || true
-echo "\$LINE" >> /tmp/cron.streakforge
+{
+  crontab -l 2>/dev/null | grep -v 'backup-db.sh\|restore-db.sh' || true
+  echo "30 3 * * * $BIN_DIR/backup-db.sh >> \$HOME/backups/streakforge/cron.log 2>&1"
+  echo "30 4 1 * * $BIN_DIR/restore-db.sh >> \$HOME/backups/streakforge/rehearsal.log 2>&1"
+} > /tmp/cron.streakforge
 crontab /tmp/cron.streakforge
 rm -f /tmp/cron.streakforge
-echo "    installed: \$(crontab -l | grep backup-db.sh)"
+echo "    installed:"
+crontab -l | grep -E 'backup-db.sh|restore-db.sh' | sed 's/^/      /'
 REMOTE
 
 echo "==> 6/6 Installing nginx site (port 8001) — SKIPPED: backend serves static + API directly on 8001 (mirrors fichub, which serves on 8000 itself)"

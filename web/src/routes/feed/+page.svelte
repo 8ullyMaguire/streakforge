@@ -49,6 +49,10 @@
 			<div class="empty">
 				<div class="big">🕳️</div>
 				No completions yet — be the first.
+				<div style="font-size:12px;margin-top:10px;">
+					The <a href="/glossary">glossary</a> explains the vocabulary, and every
+					term there names the rule that enforces it.
+				</div>
 			</div>
 		{:else}
 			{#each items as item (item.id)}
