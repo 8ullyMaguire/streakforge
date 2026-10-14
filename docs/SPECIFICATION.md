@@ -1105,14 +1105,30 @@ Both notes are in the workflow file itself. A gate that overstates itself is wor
 than no gate, and the alternative — a red CI everyone learns to ignore — is worse
 still.
 
-**Known issue, 2026-10-14:** the workflow's only run is on `3b8096c` (21:11, both jobs
-success). Pushes after 21:26 — `f03f3dc`, `a7810c9`, `c35497f`, `27c6603` — created no runs
+**Known issue, 2026-10-14: push-triggered runs stopped being created; the workflow itself
+is fine.** The symptom, reproducible: the only `push` run is `3b8096c` (21:11, both jobs
+success); pushes after 21:26 — `f03f3dc`, `a7810c9`, `c35497f`, `27c6603` — created no runs
 at all, with `enabled: true`, `allowed_actions: all`, the workflow `state=active`, the
-commits present on the remote and a deliberate empty-commit push as a control. Nothing on
-the client side explains it, and `actions/runs` reports `total_count: 1`. **Check the
-repository's Actions tab in the browser** (a banner there is the likely place the reason
-is written). Until it fires again, the gate is a local `cargo test` + `vitest run`, and a
-"CI is green" claim must name the commit it was green on.
+commits present on the remote, and a deliberate empty-commit push (`c35497f`) as a control.
+Nothing on the client side explains it and `actions/runs` reported `total_count: 1`.
+
+**What was ruled out, rather than assumed:** the credential is not the problem — `gh auth
+status` lists the `workflow` scope, and the same token pushed the commits that arrived; the
+YAML is not the problem — GitHub accepted an edit adding a trigger to the file and reported
+the workflow's id unchanged (`384814692`); Actions are not disabled for the repo — a
+**manual `gh workflow run ci.yml --ref main` produced run `38643450176` on `32e0b90`**, and
+the jobs report below are from it.
+
+So the gate is usable, just not automatic. `workflow_dispatch:` is now in the triggers, and
+after a push that matters:
+
+```
+gh workflow run ci.yml --ref main     # then: gh run watch
+```
+
+**Open question for the browser**, since the API cannot see it: the repository's Actions tab
+may carry a banner saying why `push` no longer schedules runs. Until that is read, a "CI is
+green" claim must name the commit AND say it was dispatched by hand.
 
 ---
 
@@ -1376,6 +1392,38 @@ All of the following were actually exercised (not assumed):
   SESSION_SECRET + DB password (in Hermes profile `.env`).
 - **Push**: private repo created (id 241) at opencommit.eu/MagicZhang/streakforge;
   main pushed at c226861; private:true confirmed via API.
+
+**2026-10-14 (tier 1+2) — acceptance sweep, all sixteen re-observed from scratch**
+
+Not a re-reading: every item was re-run against production and the browser, on a fresh
+probe account created and deleted by the sweep (`profiles 67 · habit_logs 512` before and
+after). One check went red and it was **my sweep's regex**, not the site: the first
+`/terms` probe looked for the words "courtesy notice", and the page says "The
+acknowledgement you may have dismissed on your first visit is exactly that — an
+acknowledgement. It is stored in your own browser and nothing on the server checks it."
+The rendered page was right; the check could not read it. That is the same family as every
+other finding here, one more layer out: **a check that cannot see the truth reports a
+failure that is not one**, and a sweep is only trustworthy when a red check is traced to
+its cause before it is believed.
+
+| # | what was re-observed, from where |
+|---|---|
+| 01 | `/api/feed?limit=50` → 50 items, `with_note=0` (and the database does hold notes, which is the asymmetry) |
+| 02 | register → `Set-Cookie: __Host-streakforge_session=…; HttpOnly; SameSite=Lax; Secure; Max-Age=2592000`; `/api/auth/me` with it → 200 |
+| 03 | `REHEARSAL OK … (0h old)` on the host; both cron entries installed; the 3-day-old control exits 1 with "BACKUP failure" |
+| 04 | `/robots.txt` allows the 10 public paths, disallows `/dashboard /settings /login /api/`, names the sitemap; `/sitemap.xml` lists **10** urls |
+| 05 | **see the CI note below** — push triggers dead, `workflow_dispatch` works |
+| 06 | live: 5 × 401 → 429 `Retry-After: 899`, then 1800 / 3600 / 7200 / 7200 at 9–20 failures; 5 `WARN … sign-in refused` lines carrying both counters and Cloudflare's client address |
+| 07 | landing page carries **9** `og:` tags; `/og.png` → 200 `image/png`, 52948 B |
+| 08 | browser with cookies and storage cleared: the overlay renders "ADULTS ONLY … This is a courtesy notice, not an age check", dismisses on click, and **stays dismissed after a reload**; `/terms` renders "an acknowledgement", "nothing on the server checks it", "no self-service button yet" |
+| 09 | 10 tests through the real router (local gate) reading every field of the JSON body |
+| 10 | `/api/today` → `{"denials_today":2,"wastes_today":2,"loggers_today":4}`, **equal to `select … from today_counts()`** run on the host |
+| 11 | two logs in one day → `today_count=2`, `devotion.wlw=1` (days, not rows) |
+| 12 | `/glossary` renders every entry with its enforcement line ("kind = 'habit' in habit_logs; activity_feed() filters on it"); the count is asserted by `glossary.test.ts` |
+| 13 | a seconds-old account is **absent** from `/api/leaderboard/daily`; after `created_at - 25 hours` it **holds a place** |
+| 14 | `/log?kind=denial` renders the denial page; `/log?kind=banana` falls back with the unknown kind named |
+| 15 | `/api/stats` → `daily_limit=5`, `remaining_today=3` after two logs of the five |
+| 16 | fresh log → `days_until_decay=30`, `decayed=false`; the dashboard renders "30 days" and "Your score resets in 5 days" when a ledger is backdated 25 days |
 
 **2026-10-14 (tier 1+2 audit) — local gates**
 

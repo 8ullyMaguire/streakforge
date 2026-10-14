@@ -39,16 +39,25 @@ have reported, which is exactly why they needed looking for.
   serve the same handler now. It was found by curl-ing the live site after the deploy, not
   by reading the code I had just written.
 
+**Acceptance sweep**: all sixteen tier 1+2 items re-observed against production and in a
+browser on 2026-10-14, from scratch on a probe account that was created and deleted by the
+sweep — the table is SPEC §21. Fifteen observed clean; the one red was my sweep's own
+`/terms` regex, and tracing it found the page saying what the item asked for.
+
 **Gates**: `cargo test` 22 lib + 48 integration + 10 route (80); `vitest run` 100 across 12
 files; `svelte-check` 0/0; `vite build` green. Three of the new tests were broken on
 purpose before being trusted (the feed DTO, the escalation, the decay threshold), each
 reddening exactly one test with the defect named, then restored and re-run green.
 
-**Not green, and it is not the code: GitHub CI stopped creating runs.** The workflow's
-only run is `3b8096c` (both jobs success). Every push after 21:26 on 2026-10-14 —
-including an empty commit pushed purely as a control — created no run, with Actions
-enabled and the commits present on the remote. Check the repo's Actions tab in a browser;
-until then the gate for a commit is the local suite (SPEC §16.3).
+**CI: push-triggered runs stopped being created; the workflow itself is fine.** The only
+`push` run is `3b8096c`; every push after 21:26 on 2026-10-14 created none, including an
+empty commit pushed purely as a control. Ruled out by experiment: the token (has the
+`workflow` scope and pushed those commits), the YAML (GitHub accepted an edit to it), and
+Actions themselves (a manual `gh workflow run ci.yml --ref main` started run `38643450176`
+on `32e0b90`, **both jobs success, 80 backend tests — the same numbers as the local gate,
+verified on a machine that is not this one**). `workflow_dispatch:` is now a trigger, so the gate is one command instead of
+automatic. The reason `push` no longer schedules runs is only visible in the repository's
+Actions tab in a browser — that is the one thing left to read (SPEC §16.3).
 
 ## 2026-10-14 — tier 1 and tier 2 of the ranked 100 (`91fc795`)
 
