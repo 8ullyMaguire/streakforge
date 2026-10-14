@@ -245,7 +245,7 @@ fallback answers everything. A status code that describes the app shell is worse
 health check — a monitor watching it would report a dead site as healthy. There is now a
 real `/api/health` that round-trips a query and answers 503.
 
-Gates for the follow-up: `cargo test` 22 unit + 48 integration + 9 route; vitest 100 in
+Gates for the follow-up: `cargo test` 22 unit + 48 integration + 10 route; vitest 100 in
 12 files; `svelte-check` 0/0; `vite build` green. Three new tests were broken on purpose
 before being trusted (the feed DTO, the escalation, the decay threshold); each reddened
 exactly one test, naming the defect, and the suite went green again once restored.

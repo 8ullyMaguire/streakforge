@@ -39,7 +39,7 @@ ranking working, not the ideas being weak.
 | 06 | **3.5** | Throttle failed logins per account and per IP **— SHIPPED** (doubling past 8/day, 2h cap, every refusal logged) | 7 | 2 | S | Auth |
 | 07 | **3.0** | Add Open Graph and Twitter meta tags **— SHIPPED** (static, honestly so) | 6 | 2 | S | Growth |
 | 08 | **3.0** | An 18+ interstitial and a clear terms line **— SHIPPED** (an acknowledgement, and it says so) | 6 | 2 | S | Compliance |
-| 09 | **3.0** | Pin activity_feed's column list with a test **— SHIPPED** (five signatures pinned, plus nine router-level tests that decode the JSON) | 6 | 2 | S | Ops |
+| 09 | **3.0** | Pin activity_feed's column list with a test **— SHIPPED** (five signatures pinned, plus ten router-level tests that decode the JSON) | 6 | 2 | S | Ops |
 | 10 | **3.0** | Who denied today: a live same-day counter **— SHIPPED** (`/api/today`) | 6 | 2 | S | Social |
 | 11 | **2.67** | Score by day, not by row, now that a day can hold five logs **— SHIPPED** | 8 | 3 | M | Scoring |
 | 12 | **2.5** | A glossary for the language **— SHIPPED** (17 terms, each naming its enforcement, linked from the empty states) | 5 | 2 | S | Content |
