@@ -31,6 +31,138 @@ pub const SESSION_USER_KEY: &str = "user";
 /// on the same host is never mistaken for this application's session.
 pub const SESSION_COOKIE_NAME: &str = "streakforge_session";
 
+/// The cookie name to actually send, given the deployment's cookie policy.
+///
+/// `__Host-` is a browser-enforced guarantee, not a convention: the prefix is
+/// accepted only on a cookie that is `Secure`, has `Path=/` and carries no
+/// `Domain`, so it is impossible for a subdomain or a plaintext connection to
+/// overwrite this session. It is applied only when `SECURE_COOKIES=1`, because a
+/// browser silently rejects a `__Host-` cookie without `Secure` — sending the
+/// prefixed name over local HTTP would mean no session at all in development.
+///
+/// Renaming the cookie signs every existing user out exactly once: the old name
+/// is simply ignored. That is the cost of the prefix, and it is paid once.
+pub fn session_cookie_name(secure: bool) -> &'static str {
+    if secure {
+        "__Host-streakforge_session"
+    } else {
+        SESSION_COOKIE_NAME
+    }
+}
+
+/// Failed logins allowed for one username before it is throttled.
+pub const LOGIN_MAX_PER_USERNAME: i64 = 5;
+/// Failed logins allowed from one IP before it is throttled. Six times the
+/// per-username ceiling on purpose: a household or a cafe shares an address, and
+/// a limit tuned to one attacker's speed would lock out the neighbours. The
+/// per-username counter is what stops a targeted guess at one account.
+pub const LOGIN_MAX_PER_IP: i64 = 30;
+/// The window both counters are measured over, in seconds.
+pub const LOGIN_WINDOW_SECS: i64 = 900;
+
+/// Should this attempt be refused, and for how long?
+///
+/// Pure, so the rule is testable without a database: `Some(secs)` means blocked
+/// with that many seconds until the oldest counted failure leaves the window.
+/// The username counter and the IP counter are independent — either one being
+/// over its ceiling blocks.
+pub fn throttle_verdict(
+    user_fails: i64,
+    ip_fails: i64,
+    user_retry_secs: Option<i64>,
+) -> Option<i64> {
+    if user_fails >= LOGIN_MAX_PER_USERNAME || ip_fails >= LOGIN_MAX_PER_IP {
+        // Never report 0: a `Retry-After: 0` invites an immediate retry that
+        // will be refused again, which reads as a broken client contract.
+        return Some(user_retry_secs.unwrap_or(LOGIN_WINDOW_SECS).max(1));
+    }
+    None
+}
+
+/// The client's address, as the site can actually see it.
+///
+/// The backend binds to loopback behind the Cloudflare tunnel, so the socket
+/// address is the proxy and every visitor would share one bucket. Cloudflare's
+/// own header is preferred, then the first `X-Forwarded-For` hop. Only loopback
+/// can reach the listener, which is what makes those headers trustworthy here.
+pub fn client_ip(headers: &axum::http::HeaderMap) -> String {
+    for name in ["cf-connecting-ip", "x-forwarded-for"] {
+        if let Some(v) = headers.get(name).and_then(|v| v.to_str().ok()) {
+            let first = v.split(',').next().unwrap_or("").trim();
+            if !first.is_empty() {
+                return first.to_string();
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
+/// Failures recorded for this username inside the window, and the seconds until
+/// the oldest of them ages out.
+async fn username_failures(pool: &PgPool, username: &str) -> ApiResult<(i64, Option<i64>)> {
+    let row: (i64, Option<f64>) = sqlx::query_as(
+        "select count(*)::bigint,
+                ceil(extract(epoch from (
+                  min(attempted_at) + make_interval(secs => $2::double precision) - now()
+                )))::float8
+         from public.login_attempts
+         where lower(username) = lower($1)
+           and attempted_at > now() - make_interval(secs => $2::double precision)",
+    )
+    .bind(username)
+    .bind(LOGIN_WINDOW_SECS as f64)
+    .fetch_one(pool)
+    .await?;
+    Ok((row.0, row.1.map(|s| s as i64)))
+}
+
+/// Same, for the address.
+async fn ip_failures(pool: &PgPool, ip: &str) -> ApiResult<i64> {
+    let n: i64 = sqlx::query_scalar(
+        "select count(*)::bigint from public.login_attempts
+         where ip = $1 and attempted_at > now() - make_interval(secs => $2::double precision)",
+    )
+    .bind(ip)
+    .bind(LOGIN_WINDOW_SECS as f64)
+    .fetch_one(pool)
+    .await?;
+    Ok(n)
+}
+
+/// Record a failure, pruning rows that can no longer matter.
+///
+/// The prune rides along with the insert so the table stays bounded with no
+/// scheduled job, and it is scoped to this username and address: a global
+/// "delete everything older than a day" would quietly shorten somebody else's
+/// window under load.
+async fn record_login_failure(pool: &PgPool, username: &str, ip: &str) -> ApiResult<()> {
+    sqlx::query(
+        "with pruned as (
+           delete from public.login_attempts
+           where attempted_at < now() - make_interval(secs => $3::double precision)
+             and (lower(username) = lower($1) or ip = $2)
+         )
+         insert into public.login_attempts (username, ip) values ($1, $2)",
+    )
+    .bind(username)
+    .bind(ip)
+    .bind((LOGIN_WINDOW_SECS * 4) as f64)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// A successful login clears that username's failures. The IP counter is NOT
+/// cleared: one legitimate user signing in does not prove the other guesses from
+/// the same address were benign.
+async fn clear_login_failures(pool: &PgPool, username: &str) -> ApiResult<()> {
+    sqlx::query("delete from public.login_attempts where lower(username) = lower($1)")
+        .bind(username)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Deterministic session-cookie signing key, derived from `SESSION_SECRET`.
 ///
 /// MUST be stable across process lifetimes. `cookie::Key::generate()` makes a
@@ -310,12 +442,31 @@ pub async fn register(
 
 /// POST /api/auth/login — verify credentials and start a session.
 /// Any failure returns a generic 401 so we don't leak which field was wrong.
+///
+/// Throttled on two counters before any password work happens: 5 failures for a
+/// username, 30 from an address, per 15 minutes. The check runs FIRST so a
+/// guessing loop cannot spend the server's Argon2 budget either — a rate limit
+/// that only fires after hashing protects the account and not the machine.
 pub async fn login(
     State(state): State<AppState>,
     session: Session,
+    headers: axum::http::HeaderMap,
     Json(body): Json<AuthForm>,
 ) -> ApiResult<Json<SessionUser>> {
     let username = validate_auth_form(&body)?;
+    let ip = client_ip(&headers);
+
+    let (user_fails, user_retry_secs) = username_failures(&state.pool, &username).await?;
+    let ip_fails = ip_failures(&state.pool, &ip).await?;
+    if let Some(secs) = throttle_verdict(user_fails, ip_fails, user_retry_secs) {
+        // Name the clock, like the logging limits do: a bare 429 reads as a
+        // broken sign-in button rather than as a wait.
+        let mins = ((secs + 59) / 60).max(1);
+        return Err(ApiError::too_many_requests(format!(
+            "Too many failed sign-ins for this account. Try again in {mins} minute(s)."
+        ))
+        .with_retry_after(secs));
+    }
 
     let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String, Option<String>, Option<String>)>(
         "select id, username, display_name, avatar_url, provider, social_url, password_hash
@@ -329,17 +480,24 @@ pub async fn login(
         // Unknown user: burn a tiny bit of CPU so the response time doesn't
         // reveal whether the username exists.
         let _ = hash_password(&body.password);
+        // Counted too. Enumeration attempts land here, and a throttle that only
+        // counted real usernames would leave the enumeration path unlimited.
+        record_login_failure(&state.pool, &username, &ip).await?;
         return Err(ApiError::unauthorized("Invalid username or password"));
     };
 
     // Legacy X/dev rows have no password hash — they can't log in this way.
     let Some(phc) = phc else {
+        record_login_failure(&state.pool, &username, &ip).await?;
         return Err(ApiError::unauthorized("Invalid username or password"));
     };
 
     if !verify_password(&body.password, &phc) {
+        record_login_failure(&state.pool, &username, &ip).await?;
         return Err(ApiError::unauthorized("Invalid username or password"));
     }
+
+    clear_login_failures(&state.pool, &username).await?;
 
     let user = SessionUser {
         id,

@@ -5,6 +5,32 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="description" content="StreakForge — whiteboi denial tracker. Lock, deny, drill, waste when permitted. The board remembers who knows their place." />
 		<meta name="theme-color" content="#0a0a0a" />
+		<!--
+			Item 07: a link to this site pasted into a chat rendered as a bare URL.
+			These tags are STATIC, not per-route: the app is a client-rendered SPA,
+			so a crawler that does not execute JavaScript (every chat unfurler)
+			only ever sees this document. Per-route tags would be a promise the
+			architecture cannot keep.
+		-->
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="StreakForge" />
+		<meta property="og:title" content="StreakForge — Embrace Defeat. The Future Is Black." />
+		<meta
+			property="og:description"
+			content="A whiteboi denial tracker with public boards: log the waste, log the denial, hold the streak. Activity is public; your notes are not."
+		/>
+		<meta property="og:url" content="https://streakforge.polarisocial.xyz/" />
+		<meta property="og:image" content="https://streakforge.polarisocial.xyz/og.png" />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta property="og:image:alt" content="StreakForge — the spade mark on black." />
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:title" content="StreakForge — Embrace Defeat. The Future Is Black." />
+		<meta
+			name="twitter:description"
+			content="Log the waste, log the denial, hold the streak. Public boards; private notes."
+		/>
+		<meta name="twitter:image" content="https://streakforge.polarisocial.xyz/og.png" />
 		<meta name="apple-mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 		<meta name="apple-mobile-web-app-title" content="StreakForge" />

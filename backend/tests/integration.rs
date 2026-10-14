@@ -573,18 +573,10 @@ async fn streak_beats_a_single_log_on_the_board(pool: PgPool) {
     // (This test used to assert the old "denial = 10x waste" weighting, which
     // 0008 replaced. Mutually exclusive streaks make a 10x per-denial bonus
     // self-contradictory: you could never hold both.)
-    let a = sqlx::query_scalar::<_, uuid::Uuid>(
-        "insert into profiles (username) values ('waster') returning id",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let b = sqlx::query_scalar::<_, uuid::Uuid>(
-        "insert into profiles (username) values ('denier_lead') returning id",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    // Aged fixtures: 0011 will not rank an account younger than 24 hours, and
+    // this test is about the multiplier, not about the sybil floor.
+    let a = insert_aged_user(&pool, "waster").await;
+    let b = insert_aged_user(&pool, "denier_lead").await;
 
     sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'habit')")
         .bind(a)
@@ -624,12 +616,8 @@ async fn three_affirmations_count_as_one_game_bonus(pool: PgPool) {
     // feed "Game Bonus" instead, at 1 point per 3 reps: 3 reps = 1, 6 = 2.
     // This is also why affirmations get their own daily budget — a strict
     // 1/day would make the 3-reps-per-point rule unreachable.
-    let c = sqlx::query_scalar::<_, uuid::Uuid>(
-        "insert into profiles (username) values ('driller_lead') returning id",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    // Aged for the same reason as above: the daily board has an age floor now.
+    let c = insert_aged_user(&pool, "driller_lead").await;
 
     for _ in 0..3 {
         log_on_day(&pool, c, "affirmation", 0).await;
@@ -655,18 +643,10 @@ async fn daily_uses_rolling_24h_window(pool: PgPool) {
     // A log 12 hours ago is NOT "today" UTC anymore, but MUST appear on the
     // daily board (rolling 24h). A log 3 days ago must NOT appear on daily
     // but SHOULD appear on weekly (rolling 7 days).
-    let recent = sqlx::query_scalar::<_, uuid::Uuid>(
-        "insert into profiles (username) values ('recent_logger') returning id",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let old = sqlx::query_scalar::<_, uuid::Uuid>(
-        "insert into profiles (username) values ('week_logger') returning id",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    // Aged: the window membership is what this test is about, and a profile
+    // created this instant would be excluded by the 24-hour sybil floor.
+    let recent = insert_aged_user(&pool, "recent_logger").await;
+    let old = insert_aged_user(&pool, "week_logger").await;
 
     sqlx::query(
         "insert into habit_logs (user_id, kind, logged_at) values ($1, 'habit', now() - interval '12 hours')",
@@ -1308,12 +1288,9 @@ async fn score_decays_to_zero_after_30_days_idle(pool: PgPool) {
 async fn a_lapsed_user_drops_off_the_leaderboard(pool: PgPool) {
     // `where di.score > 0` must now also exclude the wiped, so a lapsed user
     // leaves the all-time board rather than sitting on it as a zero.
-    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "insert into profiles (username) values ('decay_board') returning id",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    // Aged, so that the first assertion is about live logs and not about the
+    // 24-hour floor that would exclude a brand-new account anyway.
+    let uid = insert_aged_user(&pool, "decay_board").await;
 
     // Inside the window at first, so the user genuinely appears on the board.
     for g in (1..5).rev() {
@@ -1493,9 +1470,8 @@ async fn the_kpi_top_weekly_query_decodes(pool: PgPool) {
     // racism_penalty. This pins that the KPI endpoint's copy of that query
     // decodes, because the failure otherwise appears only as a 500 in a
     // browser, on the one page whose whole job is to load.
-    let u = sqlx::query_scalar::<_, uuid::Uuid>(
-        "insert into profiles (username) values ('kpi_board') returning id",
-    ).fetch_one(&pool).await.unwrap();
+    // Aged: the weekly board has a 24-hour account-age floor since 0011.
+    let u = insert_aged_user(&pool, "kpi_board").await;
     sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'habit')")
         .bind(u).execute(&pool).await.unwrap();
     sqlx::query("insert into habit_logs (user_id, kind) values ($1, 'denial')")
@@ -1593,4 +1569,270 @@ async fn the_kpi_handler_casts_the_numeric_board_columns(pool: PgPool) {
     assert!(kpi.contains("State(state): State<AppState>") && !kpi.contains("AuthUser"),
         "get_kpi must take no auth extractor -- the page is public by design");
     drop(pool);
+}
+
+// ===========================================================================
+// 0011 — feed privacy, day-based scoring, sybil floor, decay countdown.
+//
+// The migration changes four behaviours at once; each one gets a test that
+// fails if the rule is reversed, and the four public function signatures are
+// pinned as literals (a changed OUT list decodes shifted or 500s at runtime,
+// which no SQL test would otherwise catch).
+// ===========================================================================
+
+/// A profile that has existed for two days.
+///
+/// Needed because 0011 puts a 24-hour floor under leaderboard appearances, and
+/// every leaderboard test here creates its user and logs in the same instant.
+/// Backdating the FIXTURE keeps those tests about ranking; the floor itself is
+/// asserted separately in `boards_wait_a_day_before_ranking_a_new_account`.
+async fn insert_aged_user(pool: &PgPool, username: &str) -> uuid::Uuid {
+    sqlx::query_scalar(
+        "insert into profiles (username, created_at) values ($1, now() - interval '2 days')
+         returning id",
+    )
+    .bind(username)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// One log at a given offset from now, in days (0 = today).
+async fn log_at(pool: &PgPool, uid: uuid::Uuid, kind: &str, days_ago: i32) {
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, logged_at)
+         values ($1, $2, now() - ($3 || ' days')::interval)",
+    )
+    .bind(uid)
+    .bind(kind)
+    .bind(days_ago)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The nine-value Devotion Index row, in the signature order 0011 defines.
+type IndexRow = (i64, i64, i64, f64, f64, f64, i64, bool, Option<i64>);
+
+async fn devotion(pool: &PgPool, uid: uuid::Uuid) -> IndexRow {
+    sqlx::query_as(
+        "select wlw::bigint, wld::bigint, game_bonus::bigint,
+                multiplier::float8, racism_penalty::float8, score::float8,
+                lifetime_total::bigint, decayed, days_until_decay::bigint
+         from devotion_index($1, null)",
+    )
+    .bind(uid)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn feed_never_publishes_a_note(pool: PgPool) {
+    let uid = insert_aged_user(&pool, "notekeeper").await;
+    sqlx::query("insert into habit_logs (user_id, kind, note) values ($1, 'habit', 'private text')")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The note is gone from the function's RESULT TYPE, not merely unselected.
+    // A column the SQL cannot return is a column no handler can leak, and this
+    // is the assertion that survives a future `select *`.
+    let cols: String = sqlx::query_scalar(
+        "select pg_get_function_result(p.oid)
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+         where n.nspname = 'public' and p.proname = 'activity_feed'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!cols.contains("note"),
+        "activity_feed must not return a note column; a public feed of notes was the leak: {cols}");
+
+    // And a row really does decode as the six columns the handler expects.
+    // `logged_at::text` keeps this test free of a `time`/`chrono` type binding:
+    // the point here is the column COUNT and order, not the timestamp type.
+    let row = sqlx::query_as::<_, (i64, uuid::Uuid, String, Option<String>, Option<String>, String)>(
+        "select id, user_id, username, display_name, avatar_url, logged_at::text
+         from activity_feed(0, 50)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.2, "notekeeper");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn stats_still_hands_a_user_their_own_notes(_pool: PgPool) {
+    // The dashboard reads notes back out of /api/stats; only the PUBLIC feed
+    // lost them. This is a source check on the same principle as the KPI test:
+    // the query that serves a user their own logs must still select `note`.
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/api.rs")).unwrap();
+    let stats = src.split("async fn compute_stats").nth(1).expect("compute_stats exists");
+    let stats = &stats[..stats.find("\nasync fn ").or(stats.find("\npub async fn ")).unwrap_or(stats.len())];
+    assert!(stats.contains("note"),
+        "compute_stats must still return the caller's own notes — the privacy change is about the public feed");
+    // ...while the public feed handler must not use the note-carrying type.
+    let feed = src.split("pub async fn get_feed").nth(1).expect("get_feed exists");
+    let feed = &feed[..feed.find("\npub async fn ").unwrap_or(feed.len())];
+    assert!(feed.contains("PublicFeedItem"), "get_feed must map into PublicFeedItem");
+    assert!(!feed.contains("FeedItem {") || feed.contains("PublicFeedItem {"),
+        "get_feed must not construct the note-carrying FeedItem");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn scoring_counts_days_not_rows(pool: PgPool) {
+    // Five logs on ONE UTC day.
+    let farmer = insert_aged_user(&pool, "volume_farmer").await;
+    for _ in 0..5 {
+        log_at(&pool, farmer, "habit", 0).await;
+    }
+    let (wlw_farmer, _, _, _, _, score_farmer, lifetime_farmer, _, _) = devotion(&pool, farmer).await;
+    assert_eq!(wlw_farmer, 1,
+        "five logs on one day are one day of activity, not five: repetition must not buy rank");
+    assert_eq!(lifetime_farmer, 5, "the lifetime record still counts rows — it is a record, not a score");
+
+    // One log on each of five days.
+    let steady = insert_aged_user(&pool, "steady").await;
+    for d in 0..5 {
+        log_at(&pool, steady, "habit", d).await;
+    }
+    let (wlw_steady, _, _, _, _, score_steady, _, _, _) = devotion(&pool, steady).await;
+    assert_eq!(wlw_steady, 5, "five days of logging is five");
+    assert_eq!(score_farmer, 1.0, "one day of wasting scores 1.0 before the multiplier");
+    assert!(score_steady > score_farmer,
+        "consistency must beat volume: {score_steady} vs {score_farmer}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn denials_also_count_by_day(pool: PgPool) {
+    let uid = insert_aged_user(&pool, "denier").await;
+    for _ in 0..4 {
+        log_at(&pool, uid, "denial", 0).await;
+    }
+    let (_, wld, _, _, _, _, _, _, _) = devotion(&pool, uid).await;
+    assert_eq!(wld, 1, "a day of denial counts once, like a day of waste");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn boards_wait_a_day_before_ranking_a_new_account(pool: PgPool) {
+    // A brand-new account with a log today.
+    // Created moments ago, which is the whole point: this account must be
+    // refused a board slot.
+    let fresh: uuid::Uuid = sqlx::query_scalar(
+        "insert into profiles (username) values ('brand_new') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    log_at(&pool, fresh, "habit", 0).await;
+
+    let ranked: i64 = sqlx::query_scalar("select count(*) from daily_leaderboard_weighted(50)")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ranked, 0, "an account younger than 24 hours must not hold a board slot");
+
+    // The same account, one day older, ranks.
+    sqlx::query("update profiles set created_at = now() - interval '25 hours' where id = $1")
+        .bind(fresh)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let ranked: i64 = sqlx::query_scalar("select count(*) from daily_leaderboard_weighted(50)")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ranked, 1, "the rule is an age floor, not a ban");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn decay_countdown_is_reported_on_the_index(pool: PgPool) {
+    // Never logged: nothing to lose, so no countdown rather than a false "30".
+    let quiet = insert_aged_user(&pool, "never_logged").await;
+    let (_, _, _, _, _, _, _, decayed, days) = devotion(&pool, quiet).await;
+    assert_eq!(days, None, "a user with no logs has no decay countdown");
+    assert!(!decayed);
+
+    // A log 25 days old: five days of grace left (30 - 25).
+    let twentyfive = insert_aged_user(&pool, "nearly_gone").await;
+    log_at(&pool, twentyfive, "habit", 25).await;
+    let (_, _, _, _, _, _, _, decayed, days) = devotion(&pool, twentyfive).await;
+    assert_eq!(days, Some(5), "25 days of silence leaves 5 of the 30-day era");
+    assert!(!decayed);
+
+    // A log 40 days old: the era already ended, and the countdown says 0 rather
+    // than going negative, so the UI can distinguish "nearly gone" from "gone".
+    let forty = insert_aged_user(&pool, "long_gone").await;
+    log_at(&pool, forty, "habit", 40).await;
+    let (_, _, _, _, _, score, _, decayed, days) = devotion(&pool, forty).await;
+    assert_eq!(days, Some(0));
+    assert!(decayed, "logs outside the horizon must report as decayed");
+    assert_eq!(score, 0.0, "a decayed score is zero, which is why the warning matters");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn today_counts_only_counts_today(pool: PgPool) {
+    let a = insert_aged_user(&pool, "today_a").await;
+    let b = insert_aged_user(&pool, "today_b").await;
+    for _ in 0..3 {
+        log_at(&pool, a, "denial", 0).await;
+    }
+    log_at(&pool, a, "habit", 0).await;
+    log_at(&pool, b, "habit", 0).await;
+    // Two days ago: must not be in "today" by any of the three counters.
+    log_at(&pool, b, "habit", 2).await;
+    log_at(&pool, b, "denial", 2).await;
+
+    let (denials, wastes, loggers): (i64, i64, i64) =
+        sqlx::query_as("select denials_today::bigint, wastes_today::bigint, loggers_today::bigint from today_counts()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(denials, 3, "three denials were logged today");
+    assert_eq!(wastes, 2, "two wastes were logged today");
+    assert_eq!(loggers, 2, "two distinct people logged something today");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn public_function_signatures_are_pinned(pool: PgPool) {
+    // Exact literal comparison, deliberately brittle: SQLx decodes these rows
+    // positionally, so a renamed, retyped or reordered column is a runtime 500
+    // on a public page with every test still green. Adding a column here is
+    // meant to be a deliberate act that starts with editing this list.
+    let expected: [(&str, &str); 5] = [
+        (
+            "activity_feed",
+            "TABLE(id bigint, user_id uuid, username text, display_name text, avatar_url text, logged_at timestamp with time zone)",
+        ),
+        (
+            "devotion_index",
+            "TABLE(wlw bigint, wld bigint, game_bonus bigint, multiplier numeric, racism_penalty numeric, score numeric, lifetime_total bigint, decayed boolean, days_until_decay bigint)",
+        ),
+        (
+            "devotion_leaderboard",
+            "TABLE(user_id uuid, username text, display_name text, avatar_url text, score numeric, wlw bigint, wld bigint, game_bonus bigint, multiplier numeric, streak integer, active_kind text, last_log_at timestamp with time zone, lifetime_total bigint)",
+        ),
+        (
+            "kpi_totals",
+            "TABLE(total_wasted bigint, total_denied bigint, total_affirmations bigint, total_users bigint, active_24h bigint, new_7d bigint, currently_locked bigint, total_lock_hours double precision, denial_rate double precision)",
+        ),
+        (
+            "today_counts",
+            "TABLE(denials_today bigint, wastes_today bigint, loggers_today bigint)",
+        ),
+    ];
+    for (name, want) in expected {
+        let got: String = sqlx::query_scalar(
+            "select regexp_replace(pg_get_function_result(p.oid), '\\s+', ' ', 'g')
+             from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+             where n.nspname = 'public' and p.proname = $1",
+        )
+        .bind(name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(got, want, "the column list of {name}() changed; the Rust tuple must change with it");
+    }
 }

@@ -1,4 +1,4 @@
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
@@ -7,11 +7,27 @@ use serde_json::json;
 pub struct ApiError {
     pub status: StatusCode,
     pub message: String,
+    /// Seconds the caller should wait, sent as `Retry-After` when set.
+    ///
+    /// The site's messages already name the clock ("you can waste again at
+    /// 00:00Z") because a 429 with no time in it reads as a broken button. A
+    /// header is the machine-readable half of that same promise, and it is what
+    /// a client or a proxy is entitled to act on.
+    pub retry_after: Option<i64>,
 }
 
 impl ApiError {
     pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self { status, message: message.into() }
+        Self {
+            status,
+            message: message.into(),
+            retry_after: None,
+        }
+    }
+    /// Attach a `Retry-After` (in seconds) to this error.
+    pub fn with_retry_after(mut self, secs: i64) -> Self {
+        self.retry_after = Some(secs.max(0));
+        self
     }
     pub fn bad_request(msg: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, msg)
@@ -32,7 +48,13 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+        let mut res = (self.status, Json(json!({ "error": self.message }))).into_response();
+        if let Some(secs) = self.retry_after {
+            if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+                res.headers_mut().insert(header::RETRY_AFTER, v);
+            }
+        }
+        res
     }
 }
 

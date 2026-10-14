@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import LogButton from '$lib/components/LogButton.svelte';
 	import StreakCalendar from '$lib/components/StreakCalendar.svelte';
+	import { budgetLabel } from '$lib/countdown';
 
 	let stats = $state<Stats | null>(null);
 	let error = $state<string | null>(null);
@@ -11,6 +12,15 @@
 	// countdown to this so the remaining seconds tick down from the server's
 	// number instead of trusting the browser clock to agree with it.
 	let receivedAt = $state(Date.now());
+
+	// Ticks slowly so the budget line's "resets in 4h 12m" stays honest without
+	// a reload. 30s, not 1s: the label is in minutes, and a per-second interval
+	// on a page that also runs a per-second countdown is work nobody can see.
+	let now = $state(Date.now());
+	$effect(() => {
+		const t = setInterval(() => (now = Date.now()), 30_000);
+		return () => clearInterval(t);
+	});
 
 	function last30Days(s: Stats): { date: string; count: number }[] {
 		const byDay = new Map<string, number>();
@@ -74,8 +84,8 @@
 			KNOW YOUR PLACE
 		</h1>
 		<p style="color:var(--text-dim);font-size:14px;margin:0 0 20px;">
-			Loads wasted are a budget of five a day (UTC) — miss every one and the streak
-			resets. A denial and a waste are mutually exclusive.
+			Loads wasted are a budget of {stats.daily_limit} a day (UTC) — miss every one and
+			the streak resets. A denial and a waste are mutually exclusive.
 		</p>
 
 		<!-- Whiteboi Devotion Index -->
@@ -126,6 +136,24 @@
 					lifetime log{stats.devotion.lifetime_total === 1 ? '' : 's'} is intact, but the score resets with
 					the next log you make.
 				</div>
+			{:else if stats.devotion.days_until_decay !== null && stats.devotion.days_until_decay <= 10}
+				<!--
+					Item 16: the decay used to be silent. A user found out by
+					returning to a zero, which reads as the site having lost their
+					score rather than as a rule they can act on. Ten days is late
+					enough to be about the real state and early enough to log once.
+				-->
+				<div
+					style="margin-top:10px;padding:9px 11px;border-radius:8px;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.35);font-size:12px;line-height:1.5;color:var(--gold);"
+				>
+					{#if stats.devotion.days_until_decay === 0}
+						Your score resets today — it has been 30 days.
+					{:else}
+						Your score resets in {stats.devotion.days_until_decay}
+						{stats.devotion.days_until_decay === 1 ? 'day' : 'days'}.
+					{/if}
+					One log keeps the era alive.
+				</div>
 			{:else}
 				<div style="margin-top:8px;font-size:12px;color:var(--text-dim);">
 					lifetime <span style="color:var(--text);">{stats.devotion.lifetime_total}</span> logs
@@ -158,6 +186,23 @@
 		</div>
 
 		<div class="card" style="margin-bottom:24px;">
+			<!--
+				Item 15: the remaining budget and the reset clock in ONE line, in
+				the place where a user decides whether to press the button. Both
+				numbers come from the server — `remaining_today` is what it will
+				enforce, and the countdown is anchored to when the payload landed
+				(`receivedAt`) so the display cannot drift against the server's
+				clock. The label itself is a pure function in $lib/countdown so it
+				can be tested with fake timers instead of a rendered page.
+			-->
+			<div
+				style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;letter-spacing:0.04em;color:var(--text-dim);margin-bottom:12px;"
+			>
+				<span>{budgetLabel(stats.remaining_today, stats.daily_limit, stats.next_allowed_in_secs, now - receivedAt)}</span>
+				{#if stats.blocked_by_exclusivity}
+					<span style="color:var(--gold);">the other kind already ran today</span>
+				{/if}
+			</div>
 			<LogButton stats={() => stats!} onLogged={handleLogged} {receivedAt} />
 		</div>
 

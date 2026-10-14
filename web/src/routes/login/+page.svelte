@@ -3,6 +3,13 @@
 	import { computeChallengeProof } from '$lib/challenge';
 	import { isValidUsername } from '$lib/validation';
 	import { pushToast } from '$lib/toasts.svelte';
+	import { page } from '$app/state';
+	import { safeNext } from '$lib/deeplink';
+
+	// Where to go after a successful sign-in. Read once at mount: the query
+	// string cannot change under us mid-login, and re-reading it during submit
+	// would make the redirect depend on render timing.
+	const next = safeNext(page.url.searchParams.get('next'));
 
 	type Mode = 'login' | 'register';
 
@@ -55,7 +62,7 @@
 			};
 			await (mode === 'register' ? api.register(payload) : api.login(payload));
 			pushToast(mode === 'register' ? 'Account created. Welcome!' : 'Signed in.');
-			window.location.href = '/dashboard';
+			window.location.href = next;
 		} catch (e) {
 			error = e instanceof ApiRequestError ? e.message : e instanceof Error ? e.message : 'Something went wrong.';
 			busy = false;

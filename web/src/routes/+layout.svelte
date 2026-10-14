@@ -3,8 +3,11 @@
 	import Navbar from '$lib/components/Navbar.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
+	import AgeGate from '$lib/components/AgeGate.svelte';
 </script>
 
+<!-- Renders nothing for a visitor who has already acknowledged (item 08). -->
+<AgeGate />
 <Navbar />
 <BottomNav />
 <main>
@@ -23,6 +26,10 @@
 		     quiet alternative the plan wanted. -->
 		<div style="color:var(--text-dim);font-size:12px;letter-spacing:0.06em;margin-bottom:12px;">
 			<a href="/kpi" style="color:var(--text-dim);">COMMUNITY KPI</a>
+			<span style="opacity:0.4;"> · </span>
+			<a href="/glossary" style="color:var(--text-dim);">GLOSSARY</a>
+			<span style="opacity:0.4;"> · </span>
+			<a href="/terms" style="color:var(--text-dim);">TERMS</a>
 		</div>
 		<div style="color:var(--text-dim);font-size:12px;letter-spacing:0.06em;">
 			STREAKFORGE — EMBRACE DEFEAT. THE FUTURE IS BLACK.

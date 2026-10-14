@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The static routes of an SPA. Kept as a literal list rather than generated:
+  the build has no route manifest to walk, and a one-line diff when a page is
+  added is easier to trust than a generator nobody reads.
+
+  NO /doctrine/1..11 entries. The eleven manifestos are fetched by the /doctrine
+  page itself (/api/doctrine for the list, /api/doctrine/{id} for a document) —
+  there is no per-document PAGE, so those URLs would be SPA fallbacks: HTTP 200
+  with an error page inside. The first draft of this file listed them anyway,
+  because the API has ids for them; a sitemap is a list of pages, not of API
+  resources.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://streakforge.polarisocial.xyz/</loc><priority>1.0</priority></url>
+  <url><loc>https://streakforge.polarisocial.xyz/leaderboard</loc><priority>0.9</priority></url>
+  <url><loc>https://streakforge.polarisocial.xyz/kpi</loc><priority>0.7</priority></url>
+  <url><loc>https://streakforge.polarisocial.xyz/feed</loc><priority>0.6</priority></url>
+  <url><loc>https://streakforge.polarisocial.xyz/doctrine</loc><priority>0.8</priority></url>
+  <url><loc>https://streakforge.polarisocial.xyz/glossary</loc><priority>0.6</priority></url>
+  <url><loc>https://streakforge.polarisocial.xyz/terms</loc><priority>0.4</priority></url>
+  <url><loc>https://streakforge.polarisocial.xyz/log</loc><priority>0.5</priority></url>
+  <url><loc>https://streakforge.polarisocial.xyz/drill</loc><priority>0.5</priority></url>
+  <url><loc>https://streakforge.polarisocial.xyz/denial</loc><priority>0.5</priority></url>
+</urlset>

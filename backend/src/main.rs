@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // sends the cookie on exactly those navigations and still blocks it on
     // cross-site subrequests, which is the whole point of the attribute.
     let session_layer = SessionManagerLayer::new(session_store)
-        .with_name(auth::SESSION_COOKIE_NAME)
+        .with_name(auth::session_cookie_name(cfg.secure_cookies))
         .with_expiry(Expiry::OnInactivity(CookieDuration::days(cfg.session_ttl_days)))
         .with_same_site(SameSite::Lax)
         .with_signed(key)
@@ -93,6 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/kpi", get(streakforge_api::api::get_kpi))
         .route("/user-of-the-day", get(streakforge_api::api::get_user_of_the_day))
         .route("/total", get(streakforge_api::api::get_total))
+        .route("/today", get(streakforge_api::api::get_today))
         .route("/feed", get(streakforge_api::api::get_feed))
         .route("/profile/{username}", get(streakforge_api::api::get_profile))
         .route("/profile", patch(streakforge_api::api::update_profile))

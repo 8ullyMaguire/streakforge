@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { FeedItem } from '$lib/types';
+	import type { PublicFeedItem } from '$lib/types';
 	import { timeAgo } from '$lib/api';
 	import { onMount } from 'svelte';
 
-	let items = $state<FeedItem[]>([]);
+	let items = $state<PublicFeedItem[]>([]);
 	let cursor = $state<string | null>(null);
 	let loading = $state(false);
 	let done = $state(false);
@@ -32,9 +32,17 @@
 </svelte:head>
 
 <div class="container" style="max-width:640px;padding-top:28px;">
-	<h1 style="font-size:24px;letter-spacing:0.04em;margin:0 0 20px;">
+	<h1 style="font-size:24px;letter-spacing:0.04em;margin:0 0 12px;">
 		PUBLIC ACTIVITY FEED
 	</h1>
+	<!--
+		Item 01: this page used to print every log's note. Nothing said the
+		confession box was public, so the honest move is to say the opposite out
+		loud: the feed is the activity, and the words stay with their author.
+	-->
+	<p style="color:var(--text-dim);font-size:12px;margin:0 0 20px;">
+		Activity only — notes stay private to whoever wrote them.
+	</p>
 
 	<div class="card" style="padding:4px 18px;">
 		{#if items.length === 0 && !loading}
@@ -55,9 +63,6 @@
 							<a href={`/profile/${item.username}`}>{item.username}</a>
 						</span>
 						<span style="color:var(--text-dim);font-size:12px;"> logged a completion</span>
-						{#if item.note}
-							<div class="note">“{item.note}”</div>
-						{/if}
 					</div>
 					<span class="time">{timeAgo(item.logged_at)}</span>
 				</div>

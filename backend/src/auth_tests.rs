@@ -4,9 +4,73 @@
 //! the SQL paths and the migration.
 
 use crate::auth::{
-    challenge_proof_valid, compute_challenge_proof, fresh_nonce, hash_password, verify_password,
-    AuthForm, FORM_MAX_OPEN_MS, FORM_MIN_OPEN_MS,
+    challenge_proof_valid, client_ip, compute_challenge_proof, fresh_nonce, hash_password,
+    session_cookie_name, throttle_verdict, verify_password, AuthForm, LOGIN_MAX_PER_IP,
+    LOGIN_MAX_PER_USERNAME, LOGIN_WINDOW_SECS, FORM_MAX_OPEN_MS, FORM_MIN_OPEN_MS,
 };
+
+// ---- Session cookie naming -------------------------------------------------
+
+#[test]
+fn host_prefix_applies_only_when_the_cookie_is_secure() {
+    // `__Host-` without `Secure` is rejected by every browser, so sending the
+    // prefixed name over local HTTP would mean no session at all in dev.
+    assert_eq!(session_cookie_name(false), "streakforge_session");
+    assert_eq!(session_cookie_name(true), "__Host-streakforge_session");
+    // The prefix is a browser guarantee only when the name starts with it
+    // exactly -- "__host-" (lowercase) is just a name.
+    assert!(session_cookie_name(true).starts_with("__Host-"));
+}
+
+// ---- Failed-login throttle -------------------------------------------------
+
+#[test]
+fn throttle_allows_below_the_ceiling_and_blocks_at_it() {
+    // Last allowed attempt: one under the limit.
+    assert_eq!(throttle_verdict(LOGIN_MAX_PER_USERNAME - 1, 0, Some(120)), None);
+    // The attempt that trips it.
+    assert!(throttle_verdict(LOGIN_MAX_PER_USERNAME, 0, Some(120)).is_some());
+    // The IP ceiling is independent and higher: five failures — enough to trip
+    // one username — must NOT block the address, or a shared household or cafe
+    // would lock out everyone at the first guesser's fifth try.
+    assert_eq!(throttle_verdict(0, LOGIN_MAX_PER_USERNAME, Some(120)), None);
+    assert!(throttle_verdict(0, LOGIN_MAX_PER_IP, Some(120)).is_some());
+    assert!(LOGIN_MAX_PER_IP > LOGIN_MAX_PER_USERNAME);
+}
+
+#[test]
+fn throttle_never_reports_zero_seconds() {
+    // `Retry-After: 0` invites an immediate retry that is refused again, which
+    // reads as a broken client contract rather than as a wait.
+    let blocked = throttle_verdict(99, 0, None).expect("over the ceiling is blocked");
+    assert!(blocked >= 1, "a blocked verdict must report at least one second");
+    let blocked = throttle_verdict(99, 0, Some(0)).expect("still blocked");
+    assert_eq!(blocked, 1);
+    // With no row left to time the window from, the full window is the answer.
+    let blocked = throttle_verdict(99, 0, None).unwrap();
+    assert_eq!(blocked, LOGIN_WINDOW_SECS);
+}
+
+#[test]
+fn client_ip_prefers_cloudflare_then_the_first_forwarded_hop() {
+    use axum::http::HeaderMap;
+    let mut h = HeaderMap::new();
+    assert_eq!(client_ip(&h), "unknown");
+
+    h.insert("x-forwarded-for", "203.0.113.7, 10.0.0.1".parse().unwrap());
+    assert_eq!(client_ip(&h), "203.0.113.7", "first hop only, not the whole chain");
+
+    // Cloudflare's own header wins when both are present: it is set by the edge
+    // and cannot be appended to by a client.
+    h.insert("cf-connecting-ip", "198.51.100.9".parse().unwrap());
+    assert_eq!(client_ip(&h), "198.51.100.9");
+
+    // An empty header falls through rather than returning an empty bucket that
+    // every visitor would share.
+    let mut h2 = HeaderMap::new();
+    h2.insert("x-forwarded-for", "".parse().unwrap());
+    assert_eq!(client_ip(&h2), "unknown");
+}
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()

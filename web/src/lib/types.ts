@@ -51,6 +51,20 @@ export interface LeaderboardEntry {
 	last_log_at: string | null;
 }
 
+/** One entry of the PUBLIC feed: deliberately no `note`.
+ *
+ *  The confession box is private and only the author ever reads a note back
+ *  (via `Stats.recent_logs`, which is their own). The backend's `activity_feed()`
+ *  does not return a note column at all, so this type cannot carry one. */
+export interface PublicFeedItem {
+	id: string;
+	user_id: string;
+	username: string;
+	display_name: string | null;
+	avatar_url: string | null;
+	logged_at: string;
+}
+
 export interface FeedItem {
 	id: string;
 	user_id: string;
@@ -74,6 +88,10 @@ export interface DevotionIndex {
 	/** true when the user has logs but none that still count: 30+ days idle and
 	 *  the score has been wiped. */
 	decayed: boolean;
+	/** Whole days of silence left before the score is wiped, i.e.
+	 *  `30 - days since the newest log`. `null` for a user who has never logged
+	 *  (nothing to lose); `0` once the era has already ended. */
+	days_until_decay: number | null;
 	/** 'habit' | 'denial' | 'none' — the kind holding the active exclusive streak */
 	active_kind: string;
 	active_streak: number;
@@ -186,6 +204,16 @@ export interface KpiResponse {
 	/** Reuses the leaderboard entry shape verbatim: the endpoint returns the
 	 *  same struct, so a second type here would be a second thing to drift. */
 	top_weekly: LeaderboardEntry[];
+}
+
+/** GET /api/today — what the community has done today (UTC).
+ *
+ *  Public, and already derivable from the KPI page; the point of the line on the
+ *  landing page is that a solitary practice has a crowd visible next to it. */
+export interface TodayCounts {
+	denials_today: number;
+	wastes_today: number;
+	loggers_today: number;
 }
 
 export interface ApiError {

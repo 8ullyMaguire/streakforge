@@ -33,3 +33,25 @@ export function formatUntil(secs: number): string {
 	const h = Math.floor(m / 60);
 	return `in ${h}h ${m % 60}m`;
 }
+
+// One line for the dashboard: how much of the budget is left, and when the
+// cadence that refills it comes round.
+//
+// Takes the server's numbers and the elapsed time rather than reading a clock
+// of its own, so it can be tested with fake timers and so the display can never
+// disagree with the budget the server enforces. `remaining` is never
+// recomputed here: the count that matters is the one the API will act on.
+export function budgetLabel(
+	remaining: number,
+	limit: number,
+	serverSecs: number,
+	elapsedMs = 0
+): string {
+	const left = `${remaining} of ${limit} left`;
+	// No countdown to show means the cadence is not currently the constraint
+	// (the day already rolled over, or nothing is left to run out of), and
+	// "resets now" next to a full budget would read as a bug.
+	const secs = remainingSecs(serverSecs, elapsedMs);
+	if (secs <= 0) return `${left} today`;
+	return `${left} · resets ${formatUntil(secs)}`;
+}

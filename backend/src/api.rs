@@ -153,6 +153,12 @@ pub struct DevotionIndexResponse {
     /// True when the user has logs but none that still count, i.e. 30+ days of
     /// silence and the score has been wiped. Drives the UI hint.
     pub decayed: bool,
+    /// Whole days of silence left before the score is wiped, i.e.
+    /// `30 - days since the newest log`, floored at 0. `None` for a user who has
+    /// never logged: there is nothing to lose yet. 0 means the era has already
+    /// ended (same state as `decayed`, told from the countdown's direction so the
+    /// dashboard can say "log to restore it" rather than "0 days left").
+    pub days_until_decay: Option<i64>,
     /// Streak of the currently active exclusive kind (the most recent WLW or WLD).
     pub active_kind: String,
     pub active_streak: i64,
@@ -167,6 +173,23 @@ pub struct FeedItem {
     pub avatar_url: Option<String>,
     pub logged_at: String,
     pub note: Option<String>,
+}
+
+/// A log as the PUBLIC feed shows it: no note.
+///
+/// A separate type rather than a `skip_serializing_if` on `FeedItem`, because
+/// the difference is a privacy rule and not a serialisation preference. The
+/// stats endpoint hands a user their own logs (notes included, authenticated
+/// and self-scoped); `activity_feed()` no longer returns a note at all, so this
+/// type cannot grow one back by accident.
+#[derive(Debug, Serialize, Clone)]
+pub struct PublicFeedItem {
+    pub id: i64,
+    pub user_id: uuid::Uuid,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub logged_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -217,7 +240,7 @@ pub struct UserOfTheDay {
 
 #[derive(Debug, Serialize)]
 pub struct FeedResponse {
-    pub items: Vec<FeedItem>,
+    pub items: Vec<PublicFeedItem>,
     pub next_cursor: Option<i64>,
 }
 
@@ -640,12 +663,12 @@ async fn compute_stats(
     // Whiteboi Devotion Index for this user, under the 30-day decay rule: logs
     // older than 30 days no longer count, so an inactive user reads 0 here while
     // `lifetime_total` preserves their history.
-    let (wlw, wld, game_bonus, mult, penalty, score, lifetime_total, decayed): (
-        i64, i64, i64, f64, f64, f64, i64, bool,
+    let (wlw, wld, game_bonus, mult, penalty, score, lifetime_total, decayed, days_until_decay): (
+        i64, i64, i64, f64, f64, f64, i64, bool, Option<i64>,
     ) = sqlx::query_as(
         "select wlw::bigint, wld::bigint, game_bonus::bigint,
                 multiplier::float8, racism_penalty::float8, score::float8,
-                lifetime_total::bigint, decayed
+                lifetime_total::bigint, decayed, days_until_decay::bigint
          from devotion_index_alltime($1)",
     )
     .bind(user_id)
@@ -681,6 +704,7 @@ async fn compute_stats(
             score,
             lifetime_total,
             decayed,
+            days_until_decay,
             active_kind,
             active_streak,
         },
@@ -958,6 +982,32 @@ pub async fn get_total(State(state): State<AppState>) -> ApiResult<Json<HashMap<
     Ok(Json(HashMap::from([("total", total), ("denied", denied)])))
 }
 
+/// GET /api/today — what the community has done today (UTC).
+///
+/// Public and unauthenticated, like /api/kpi: every number here is already
+/// derivable from that page, and the point of the line is that a solitary
+/// practice has a crowd visible next to it. The counts come from `today_counts()`
+/// rather than being recomputed here, so this endpoint and the database agree on
+/// what "today" means by construction (the generated `log_date` column).
+#[derive(Debug, Serialize)]
+pub struct TodayResponse {
+    pub denials_today: i64,
+    pub wastes_today: i64,
+    pub loggers_today: i64,
+}
+
+pub async fn get_today(State(state): State<AppState>) -> ApiResult<Json<TodayResponse>> {
+    let (denials_today, wastes_today, loggers_today): (i64, i64, i64) =
+        sqlx::query_as("select denials_today::bigint, wastes_today::bigint, loggers_today::bigint from today_counts()")
+            .fetch_one(&state.pool)
+            .await?;
+    Ok(Json(TodayResponse {
+        denials_today,
+        wastes_today,
+        loggers_today,
+    }))
+}
+
 // ---- Feed ----
 
 pub async fn get_feed(
@@ -966,22 +1016,27 @@ pub async fn get_feed(
 ) -> ApiResult<Json<FeedResponse>> {
     let limit = params.limit.unwrap_or(50).clamp(1, 100);
     let cursor = params.cursor.unwrap_or(0);
-    let rows: Vec<(i64, uuid::Uuid, String, Option<String>, Option<String>, OffsetDateTime, Option<String>)> =
-        sqlx::query_as("select * from activity_feed($1, $2::int)")
-            .bind(cursor)
-            .bind(limit)
-            .fetch_all(&state.pool)
-            .await?;
-    let items: Vec<FeedItem> = rows
+    // Named columns, not `select *`: the function's OUT list is what the public
+    // sees, and this query is the second place that decides. Both now agree that
+    // a note is not public.
+    let rows: Vec<(i64, uuid::Uuid, String, Option<String>, Option<String>, OffsetDateTime)> =
+        sqlx::query_as(
+            "select id, user_id, username, display_name, avatar_url, logged_at
+             from activity_feed($1, $2::int)",
+        )
+        .bind(cursor)
+        .bind(limit)
+        .fetch_all(&state.pool)
+        .await?;
+    let items: Vec<PublicFeedItem> = rows
         .into_iter()
-        .map(|(id, uid, uname, dname, av, ts, note)| FeedItem {
+        .map(|(id, uid, uname, dname, av, ts)| PublicFeedItem {
             id,
             user_id: uid,
             username: uname,
             display_name: dname,
             avatar_url: av,
             logged_at: ts.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
-            note,
         })
         .collect();
     let next_cursor = if items.len() as i64 >= limit { items.last().map(|i| i.id) } else { None };

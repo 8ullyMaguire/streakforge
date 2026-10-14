@@ -1,0 +1,21 @@
+# StreakForge — public pages only. Nothing here is behind a paywall or a
+# login wall worth hiding from a crawler: the boards and the doctrine are the
+# site. The account pages are excluded because a signed-out crawler only ever
+# sees a login prompt there.
+User-agent: *
+Allow: /$
+Allow: /leaderboard
+Allow: /kpi
+Allow: /feed
+Allow: /doctrine
+Allow: /glossary
+Allow: /terms
+Allow: /drill
+Allow: /denial
+Allow: /log
+Disallow: /dashboard
+Disallow: /settings
+Disallow: /login
+Disallow: /api/
+
+Sitemap: https://streakforge.polarisocial.xyz/sitemap.xml

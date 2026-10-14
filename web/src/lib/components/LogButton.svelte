@@ -105,7 +105,7 @@
 	{/if}
 
 	<textarea
-		placeholder={action?.notePlaceholder ?? 'Confession (max 140 chars)…'}
+		placeholder={action?.notePlaceholder ?? 'Private note (max 140 chars)…'}
 		maxlength="140"
 		bind:value={note}
 		style="width:100%;min-height:70px;resize:vertical;"

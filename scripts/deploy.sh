@@ -58,6 +58,11 @@ echo "==> 2/6 Building frontend (production)"
 echo "==> 3/6 Syncing to $HOST"
 ssh "$HOST" "mkdir -p $DEPLOY_DIR && sudo mkdir -p $BIN_DIR $WWW_DIR && sudo chown -R alvaro:alvaro $BIN_DIR $WWW_DIR"
 rsync -az --delete "$BIN_SRC" "$HOST:$BIN_DIR/"
+# The backup/restore scripts live next to the .env they read, and are copied on
+# every deploy so the deployed copy cannot drift from this one. No --delete: the
+# destination also holds the binary and the .env, which this source does not
+# carry.
+rsync -az "$ROOT/scripts/backup-db.sh" "$ROOT/scripts/restore-db.sh" "$HOST:$BIN_DIR/"
 rsync -az --delete "$ROOT/backend/migrations" "$HOST:$DEPLOY_DIR/"
 rsync -az --delete "$ROOT/manifestos" "$HOST:$DEPLOY_DIR/"
 rsync -az --delete "$ROOT/web/build/" "$HOST:$WWW_DIR/"
@@ -75,9 +80,16 @@ ssh "$HOST" "set -e
   fi
   sudo sed -i 's|^MIGRATIONS_DIR=.*|MIGRATIONS_DIR=$DEPLOY_DIR/migrations|' $BIN_DIR/.env
   sudo sed -i 's|^MANIFESTOS_DIR=.*|MANIFESTOS_DIR=$DEPLOY_DIR/manifestos|' $BIN_DIR/.env
+  # SECURE_COOKIES is deployment POLICY, not a secret, so it is managed here
+  # rather than left to whoever set the .env up. Without it the session cookie
+  # travels without Secure and without the __Host- prefix, which on a site that
+  # only exists behind HTTPS is a defect (docs/100_IDEAS.md #02). Setting it
+  # renames the cookie, so every signed-in user is signed out exactly once.
+  sudo sed -i 's|^SECURE_COOKIES=.*|SECURE_COOKIES=1|' $BIN_DIR/.env
   grep -q '^MIGRATIONS_DIR=' $BIN_DIR/.env || echo 'MIGRATIONS_DIR=$DEPLOY_DIR/migrations' | sudo tee -a $BIN_DIR/.env
   grep -q '^MANIFESTOS_DIR=' $BIN_DIR/.env || echo 'MANIFESTOS_DIR=$DEPLOY_DIR/manifestos' | sudo tee -a $BIN_DIR/.env
-  grep -E '^(MIGRATIONS_DIR|MANIFESTOS_DIR)=' $BIN_DIR/.env"
+  grep -q '^SECURE_COOKIES=' $BIN_DIR/.env || echo 'SECURE_COOKIES=1' | sudo tee -a $BIN_DIR/.env
+  grep -E '^(MIGRATIONS_DIR|MANIFESTOS_DIR|SECURE_COOKIES)=' $BIN_DIR/.env"
 
 echo "==> 4b/6 Verifying every configured path exists on the remote"
 # A .env value pointing at a directory that is not there is an outage that only
@@ -110,6 +122,22 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+echo "==> 5b/6 Installing the nightly backup cron entry"
+# 03:30 local. Idempotent: the old line is removed before the new one is added,
+# so re-running a deploy does not stack duplicate jobs (the classic way a host
+# ends up running the same backup four times a night).
+ssh "$HOST" 'bash -s' <<REMOTE
+set -e
+mkdir -p "\$HOME/backups/streakforge"
+chmod 700 "\$HOME/backups/streakforge"
+LINE="30 3 * * * $BIN_DIR/backup-db.sh >> \$HOME/backups/streakforge/cron.log 2>&1"
+crontab -l 2>/dev/null | grep -v 'streakforge/backup-db.sh\|/opt/streakforge/backup-db.sh' > /tmp/cron.streakforge || true
+echo "\$LINE" >> /tmp/cron.streakforge
+crontab /tmp/cron.streakforge
+rm -f /tmp/cron.streakforge
+echo "    installed: \$(crontab -l | grep backup-db.sh)"
+REMOTE
 
 echo "==> 6/6 Installing nginx site (port 8001) — SKIPPED: backend serves static + API directly on 8001 (mirrors fichub, which serves on 8000 itself)"
 echo "==> Enabling + starting"
@@ -152,8 +180,12 @@ HEALTH_FAIL=0
 # Each path gets three tries. A single retryable blip (a Cloudflare hiccup, one
 # cold connection) must not read as "the deploy did NOT land cleanly"; only a
 # path that fails three times does.
-for path in "/" "/api/total" "/api/leaderboard/monthly" "/api/leaderboard/alltime" \
-            "/api/user-of-the-day" "/api/feed" "/api/doctrine" "/api/kpi"; do
+# The static files and the pages this pass added are checked here too: a
+# robots.txt that has silently started returning the SPA shell, or a /glossary
+# that 404s, is exactly the kind of breakage a "binary is running" check misses.
+for path in "/" "/api/total" "/api/today" "/api/leaderboard/monthly" "/api/leaderboard/alltime" \
+            "/api/user-of-the-day" "/api/feed" "/api/doctrine" "/api/kpi" \
+            "/robots.txt" "/sitemap.xml" "/og.png" "/glossary" "/terms" "/log"; do
   code=000
   for _ in 1 2 3; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "https://streakforge.polarisocial.xyz$path" || true)

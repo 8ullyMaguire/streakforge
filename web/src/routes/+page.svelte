@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { Leaderboard, UserOfTheDay, FeedItem } from '$lib/types';
+	import type { Leaderboard, UserOfTheDay, PublicFeedItem, TodayCounts } from '$lib/types';
 	import { timeAgo, formatCount } from '$lib/api';
 	import { onMount } from 'svelte';
 	import Marquee from '$lib/components/Marquee.svelte';
@@ -9,7 +9,10 @@
 	let denied = $state<number | null>(null);
 	let monthly = $state<Leaderboard | null>(null);
 	let uotd = $state<UserOfTheDay | null>(null);
-	let recentFeed = $state<FeedItem[]>([]);
+	let recentFeed = $state<PublicFeedItem[]>([]);
+	// Item 10: who was denied today, next to a total that only ever grows. The
+	// lifetime counters cannot say whether the place is alive RIGHT NOW.
+	let today = $state<TodayCounts | null>(null);
 	let loaded = $state(false);
 	let signedIn = $state(false);
 
@@ -18,11 +21,12 @@
 		// tolerated, but Promise.all rejects on the FIRST failure, so a single
 		// failing endpoint blanked the counters, the board and the feed at once.
 		// Each panel is independent; one being down must not take the page with it.
-		const [uotdRes, dailyRes, feedRes, totalRes] = await Promise.allSettled([
+		const [uotdRes, dailyRes, feedRes, totalRes, todayRes] = await Promise.allSettled([
 			api.userOfTheDay(),
 			api.leaderboard('monthly'),
 			api.feed('0'),
-			fetch('/api/total').then((r) => r.json())
+			fetch('/api/total').then((r) => r.json()),
+			fetch('/api/today').then((r) => r.json())
 		]);
 
 		if (uotdRes.status === 'fulfilled' && uotdRes.value) uotd = uotdRes.value;
@@ -32,6 +36,7 @@
 			total = totalRes.value.total;
 			denied = totalRes.value.denied ?? 0;
 		}
+		if (todayRes.status === 'fulfilled' && todayRes.value) today = todayRes.value;
 
 		// check auth to decide the primary CTA
 		api
@@ -181,8 +186,23 @@
 		</p>
 	{/if}
 
+	{#if today && today.loggers_today > 0}
+		<!-- Item 10: one line, under the lifetime totals it qualifies. -->
+		<p style="color:var(--text-dim);font-size:12px;text-align:center;margin-top:14px;">
+			<span style="color:var(--text);">{today.denials_today}</span>
+			{today.denials_today === 1 ? 'denial' : 'denials'} today ·
+			<span style="color:var(--text);">{today.wastes_today}</span>
+			{today.wastes_today === 1 ? 'load' : 'loads'} wasted ·
+			<span style="color:var(--text);">{today.loggers_today}</span>
+			{today.loggers_today === 1 ? 'whiteboi' : 'whitebois'} logged in
+		</p>
+	{/if}
+
 	{#if recentFeed.length > 0}
-		<h2 style="font-size:18px;letter-spacing:0.08em;margin:28px 0 12px;">CONFESSION FEED</h2>
+		<h2 style="font-size:18px;letter-spacing:0.08em;margin:28px 0 6px;">RECENT ACTIVITY</h2>
+		<p style="color:var(--text-dim);font-size:12px;margin:0 0 12px;">
+			Notes stay private. This is what happened, not what was written.
+		</p>
 		<div class="card" style="padding:4px 18px;">
 			{#each recentFeed as item}
 				<div class="feed-item">
@@ -190,9 +210,6 @@
 						<span class="username" style="font-weight:600;">
 							<a href={`/profile/${item.username}`}>{item.username}</a>
 						</span>
-						{#if item.note}
-							<div class="note">“{item.note}”</div>
-						{/if}
 					</div>
 					<div style="flex:1;"></div>
 					<span class="time">{timeAgo(item.logged_at)}</span>
