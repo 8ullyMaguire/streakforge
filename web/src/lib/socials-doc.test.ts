@@ -19,7 +19,11 @@ const DOC = resolve(process.cwd(), '../manifestos/09_socials.md');
 const src = readFileSync(DOC, 'utf8');
 const html = renderMarkdown(src);
 
-/// Every site the owner listed, by hostname.
+/// Every site the owner listed, by hostname. Two of them are named but NOT linked, because
+/// linking them would be a lie the reader pays for: gravity.polarisocial.xyz has no DNS record
+/// (NXDOMAIN, checked against Cloudflare's resolver) and leftist.polarisocial.xyz answers 502.
+/// Both are still NAMED -- the owner asked for the list of their sites, and the intention is
+/// part of that -- which is why completeness is asserted on the text and linking separately.
 const SITES = [
 	'streakforge.polarisocial.xyz',
 	'whitebois.polarisocial.xyz',
@@ -42,6 +46,13 @@ const SITES = [
 /** Every href in the rendered doc, in order. */
 const hrefs = (): string[] => [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
 
+/// The one host with no DNS record at all. leftist is NOT in this group: its hostname
+/// resolves and the entry says the site is not up yet, so its link is a real address that will
+/// work when the app lands. gravity.polarisocial.xyz is NXDOMAIN -- linking that is a dead
+/// letter, so the entry names it as text instead.
+const UNRESOLVING = 'gravity.polarisocial.xyz';
+const LIVE_SITES = SITES.filter((h) => h !== UNRESOLVING);
+
 describe('manifestos/09_socials.md, rendered', () => {
 	it('names every site in the network', () => {
 		expect(SITES.length, 'the list the owner gave has sixteen sites').toBe(16);
@@ -58,8 +69,14 @@ describe('manifestos/09_socials.md, rendered', () => {
 		// One assertion per host: the bare-URL pass keeps whatever the author
 		// wrote, so the list is written without trailing slashes and a host with
 		// one elsewhere in the doc would still satisfy a prefix match.
-		for (const h of SITES) {
+		for (const h of LIVE_SITES) {
 			expect(all, `${h} must be an href, not just text`).toContain(`https://${h}`);
+		}
+		// Named, deliberately NOT linked, and the entry says why. Linking a host
+		// that does not answer is the failure this whole test file exists to stop.
+		for (const h of [UNRESOLVING]) {
+			expect(html, `${h} must still be named`).toContain(h);
+			expect(all, `${h} has no DNS record, so it must not be a link`).not.toContain(`https://${h}`);
 		}
 	});
 
@@ -112,10 +129,15 @@ describe('manifestos/09_socials.md, rendered', () => {
 		expect([...html.matchAll(/<li>/g)].length).toBeGreaterThanOrEqual(30);
 	});
 
-	it('is honest about the two sites that are not up', () => {
-		// Listing a dead site as if it worked is the one thing this doc must not do.
+	it('is honest about the four entries that are not what they say', () => {
+		// Listing a dead or misrouted site as if it worked is the one thing this doc must not
+		// do. Each of these was measured: leftist answers 502, castopod serves the WhiteBois
+		// app, gravity.polarisocial.xyz is NXDOMAIN, and icecast.polarisocial.xyz serves the
+		// GRAVITY app rather than a stream.
 		const text = html.replace(/<[^>]+>/g, ' ');
 		expect(text).toMatch(/leftist[\s\S]{0,200}not up yet/i);
 		expect(text).toMatch(/castopod[\s\S]{0,200}not up yet/i);
+		expect(text).toMatch(/gravity[\s\S]{0,240}no DNS record/i);
+		expect(text).toMatch(/icecast[\s\S]{0,240}serves the GRAVITY app/i);
 	});
 });

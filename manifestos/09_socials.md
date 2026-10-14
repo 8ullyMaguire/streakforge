@@ -1,13 +1,14 @@
 ## My sites
 
-Everything on this list is mine. One line each, and the honest state of it — two of the sixteen are not finished yet, and they say so below rather than pretending.
+Everything on this list is mine. One line each, and the honest state of it: not all sixteen are finished, and the ones that are not say so below rather than pretending to work.
 
 - **StreakForge** — https://streakforge.polarisocial.xyz — this site: lock, deny, drill, waste
   when permitted. The board remembers.
 - **WhiteBois** — https://whitebois.polarisocial.xyz — a community for the obsessive.
 - **BlackRep** — https://blackrep.polarisocial.xyz — verified encounters, and the reputation
   that comes from them.
-- **GRAVITY** — https://gravity.polarisocial.xyz — the federated social instance.
+- **GRAVITY** — the federated social instance. Its own address, gravity.polarisocial.xyz, has
+  no DNS record yet, so for now it answers at https://icecast.polarisocial.xyz.
 - **Concord** — https://concord.polarisocial.xyz — the consensus forge. Every other site here
   takes work through it; see below.
 - **Lorehaven** — https://lorehaven.polarisocial.xyz — a welcoming home for fanfiction: read,
@@ -22,7 +23,8 @@ Everything on this list is mine. One line each, and the honest state of it — t
 - **BNWO feed** — https://bnwo-feed.polarisocial.xyz — the custom feeds.
 - **news08** — https://news.polarisocial.xyz — the news desk, and the broadcasts that go with
   it.
-- **the radio** — https://icecast.polarisocial.xyz — the stream and its player.
+- **icecast** — https://icecast.polarisocial.xyz — the radio, when there is one. That
+  hostname resolves, but it currently serves the GRAVITY app; no stream is running behind it.
 - **the forge** — https://git.polarisocial.xyz — repos, issues, mirrors. My own git, not
   somebody else's.
 - **leftist** — https://leftist.polarisocial.xyz — not up yet. Nothing answers on that
