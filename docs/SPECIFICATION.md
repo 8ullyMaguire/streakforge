@@ -1105,6 +1105,15 @@ Both notes are in the workflow file itself. A gate that overstates itself is wor
 than no gate, and the alternative — a red CI everyone learns to ignore — is worse
 still.
 
+**Known issue, 2026-10-14:** the workflow's only run is on `3b8096c` (21:11, both jobs
+success). Pushes after 21:26 — `f03f3dc`, `a7810c9`, `c35497f`, `27c6603` — created no runs
+at all, with `enabled: true`, `allowed_actions: all`, the workflow `state=active`, the
+commits present on the remote and a deliberate empty-commit push as a control. Nothing on
+the client side explains it, and `actions/runs` reports `total_count: 1`. **Check the
+repository's Actions tab in the browser** (a banner there is the likely place the reason
+is written). Until it fires again, the gate is a local `cargo test` + `vitest run`, and a
+"CI is green" claim must name the commit it was green on.
+
 ---
 
 ### 16.4 Router-level tests (`tests/routes.rs`)

@@ -33,11 +33,22 @@ have reported, which is exactly why they needed looking for.
   copy lived inline in the template where no test could reach it. The three sentences now
   live in `web/src/lib/decay.ts` with seven tests asserting the strings themselves, on
   both sides of the ten-day threshold.
+- **A sixth gap, found only after deploying**: the fix for the health check was itself
+  half a fix. `/api/health` became real, and `/health` — the path a monitor guesses first —
+  kept answering 200 with the SPA shell, i.e. the exact defect one layer out. Both paths
+  serve the same handler now. It was found by curl-ing the live site after the deploy, not
+  by reading the code I had just written.
 
-**Gates**: `cargo test` 22 lib + 48 integration + 9 route (79); `vitest run` 100 across 12
+**Gates**: `cargo test` 22 lib + 48 integration + 10 route (80); `vitest run` 100 across 12
 files; `svelte-check` 0/0; `vite build` green. Three of the new tests were broken on
 purpose before being trusted (the feed DTO, the escalation, the decay threshold), each
 reddening exactly one test with the defect named, then restored and re-run green.
+
+**Not green, and it is not the code: GitHub CI stopped creating runs.** The workflow's
+only run is `3b8096c` (both jobs success). Every push after 21:26 on 2026-10-14 —
+including an empty commit pushed purely as a control — created no run, with Actions
+enabled and the commits present on the remote. Check the repo's Actions tab in a browser;
+until then the gate for a commit is the local suite (SPEC §16.3).
 
 ## 2026-10-14 — tier 1 and tier 2 of the ranked 100 (`91fc795`)
 
