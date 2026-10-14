@@ -130,6 +130,27 @@ async fn health_reports_the_database(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn health_goes_503_when_the_database_is_gone(pool: PgPool) {
+    // The half that makes the other half mean anything: a health check that cannot
+    // fail is a status code describing nothing. Closing the pool out from under the
+    // router is the cheapest faithful way to break the database for one request
+    // without touching the scratch database's schema.
+    let app = app(pool.clone()).await;
+    assert_eq!(
+        get(&app, "/api/health", None).await.status(),
+        StatusCode::OK
+    );
+
+    pool.close().await;
+
+    let res = get(&app, "/api/health", None).await;
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = json_of(res).await;
+    assert_eq!(body["status"], "degraded");
+    assert_eq!(body["database"], "unreachable");
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn an_unknown_api_path_404s_rather_than_serving_the_app(pool: PgPool) {
     let res = get(&app(pool).await, "/api/does-not-exist", None).await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);

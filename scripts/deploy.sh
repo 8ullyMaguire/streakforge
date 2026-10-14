@@ -192,7 +192,7 @@ HEALTH_FAIL=0
 # The static files and the pages this pass added are checked here too: a
 # robots.txt that has silently started returning the SPA shell, or a /glossary
 # that 404s, is exactly the kind of breakage a "binary is running" check misses.
-for path in "/" "/api/total" "/api/today" "/api/leaderboard/monthly" "/api/leaderboard/alltime" \
+for path in "/" "/api/health" "/api/total" "/api/today" "/api/leaderboard/monthly" "/api/leaderboard/alltime" \
             "/api/user-of-the-day" "/api/feed" "/api/doctrine" "/api/kpi" \
             "/robots.txt" "/sitemap.xml" "/og.png" "/glossary" "/terms" "/log"; do
   code=000

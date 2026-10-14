@@ -1367,6 +1367,51 @@ All of the following were actually exercised (not assumed):
 - **Push**: private repo created (id 241) at opencommit.eu/MagicZhang/streakforge;
   main pushed at c226861; private:true confirmed via API.
 
+**2026-10-14 (tier 1+2 audit) — local gates**
+
+- **Backend**: `cargo test` → 22 lib + 48 integration + **10 router-level** (`tests/routes.rs`)
+  = 80 passed. **Frontend**: `vitest run` → 100 passed across 12 files; `svelte-check` →
+  0 errors / 0 warnings; `vite build` → built.
+- **Broken on purpose, three times**, each reddening exactly one test and naming the
+  defect: a `note` field added back to the feed DTO printed the leaked payload from the
+  feed test; `escalating_lockout_secs` returning `None` printed "must escalate past the
+  15-minute window, got 899"; the decay threshold moved 10 → 11 reddened "stays quiet at
+  11 days". All three restored and re-run green.
+- **The 503 branch is tested, not assumed**: `health_goes_503_when_the_database_is_gone`
+  closes the pool under the router and asserts `degraded` / `unreachable` — OK first, then
+  503, so the test cannot pass by always answering 503.
+
+**2026-10-14 (tier 1+2 audit) — production, `streakforge.polarisocial.xyz`**
+
+- **`/api/health`**: 200 `{"status":"ok","database":"ok"}` — and the endpoint it
+  replaced (`/health`) is gone, so nothing can answer 200 with `index.html` any more.
+- **The escalation, measured against the live database** (a throwaway account, since
+  deleted): five wrong guesses → `401` each; the sixth → `429 Retry-After: 899`. Recording
+  failures into the day then quoting the wait again gave **1800 → 3600 → 7200 → 7200** at
+  9, 10, 11 and 20 failures in 24h: the curve doubles and holds at the ceiling.
+- **The refusal is logged**: five `WARN streakforge_api::auth: sign-in refused: too many
+  failures` lines in the journal, carrying the username, both counters and the client
+  address — `90.162.36.189`, i.e. the address Cloudflare reported, not the loopback socket,
+  which re-proves `client_ip()` reads the header.
+- **The rehearsal runs and its staleness check bites**: on the host,
+  `REHEARSAL OK: streakforge-2026-10-14.dump (0h old) -> streakforge_restore_check |
+  profiles 67 | migrations 11`, with `profiles: live=67 restored=67`. A copy of that same
+  dump given a 3-day-old mtime exits **1** with "the newest dump is 72h old (limit 48h).
+  That is not a rehearsal failure, it is a BACKUP failure" — so a dead backup job is
+  caught by the job meant to check it.
+- **Both cron entries installed by the deploy** and printed: `30 3 * * *` backup,
+  `30 4 1 * *` rehearsal. The rehearsal's first scheduled run is 2026-11-01.
+- **The deploy's own gate now covers the new endpoint**: 16/16 health checks 200,
+  `/api/health` among them.
+- **The refactored copy renders unchanged**: a fresh account's dashboard shows the quiet
+  sentence (`0 lifetime logs · score resets if you go 30 days without logging`, with
+  `days_until_decay: null`); after one waste backdated 25 days it shows
+  `Your score resets in 5 days. One log keeps the era alive.` with
+  `days_until_decay: 5`. The empty state carries the glossary link, the doctrine page
+  carries it too, and the dashboard has two `/glossary` anchors.
+- **Probes cleaned up**: `profiles 67 · habit_logs 512 · login_attempts 0` — the exact
+  pre-probe state, so the verification left nothing behind.
+
 **2026-10-14 (tier 1+2) — local gates**
 
 - **Backend**: `cargo test` → 20 lib + 48 integration passed.
