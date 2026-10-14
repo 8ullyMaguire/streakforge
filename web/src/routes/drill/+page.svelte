@@ -9,8 +9,13 @@
 	import StreakCalendar from '$lib/components/StreakCalendar.svelte';
 	import { Repeat, ChevronRight } from 'lucide-svelte';
 
-	/** Affirmation reps per day. Mirrors DAILY_LIMIT in backend/src/api.rs. */
-	const DAILY_LIMIT = 5;
+	/**
+	 * Reps per day, used only until the stats payload arrives. The number that
+	 * matters is `stats.daily_limit`, sent by the server that enforces it — the
+	 * copy of the constant that used to live here could drift out of step with
+	 * the backend silently.
+	 */
+	const DEFAULT_DAILY_LIMIT = 5;
 
 	let stats = $state<Stats | null>(null);
 	let error = $state<string | null>(null);
@@ -24,6 +29,9 @@
 	// moves without a reload and the REPEAT button re-enables at midnight UTC.
 	let now = $state(Date.now());
 	let receivedAt = $state(Date.now());
+	// Declared after `stats`: a $derived that reads a $state declared below it is
+	// a use-before-declaration error, not a lazily-evaluated one.
+	let dailyLimit = $derived(stats?.daily_limit ?? DEFAULT_DAILY_LIMIT);
 	let drillRemaining = $derived(
 		remainingSecs(stats?.next_allowed_in_secs ?? 0, now - receivedAt)
 	);
@@ -208,7 +216,7 @@
 						{formatCountdown(drillRemaining)}
 					</div>
 					<p style="color:var(--text-dim);font-size:12px;margin:2px 0 0;">
-						Next rep allowed at 00:00 UTC · {DAILY_LIMIT} reps per day
+						Next rep allowed at 00:00 UTC · {dailyLimit} reps per day
 					</p>
 				</div>
 			{/if}

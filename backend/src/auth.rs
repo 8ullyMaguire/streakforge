@@ -26,6 +26,31 @@ use uuid::Uuid;
 
 pub const SESSION_USER_KEY: &str = "user";
 
+/// Cookie name carrying the signed session id. Named rather than left at the
+/// library default (`id`, per the OWASP session-id-name note) so a stray cookie
+/// on the same host is never mistaken for this application's session.
+pub const SESSION_COOKIE_NAME: &str = "streakforge_session";
+
+/// Deterministic session-cookie signing key, derived from `SESSION_SECRET`.
+///
+/// MUST be stable across process lifetimes. `cookie::Key::generate()` makes a
+/// new random key every start, and the session cookie's value is an HMAC over
+/// the session id under that key — so every restart silently invalidates every
+/// cookie already sitting in a browser. The session row survives in Postgres
+/// untouched, nothing can point at it any more, and the user is signed out.
+/// Observed in production: 3,339 restarts in one day (Sep 27) and 1,306 on
+/// Oct 1, each one signing out every logged-in user at once. Verified locally
+/// by restarting the process: `/api/auth/me` went 200 → 401 with the session
+/// row still present.
+///
+/// The secret is SHA-256'd first, for two reasons: `Key::derive_from` panics on
+/// a master key shorter than 32 bytes, and a human-typed secret should not be
+/// handed to HKDF as though it were a pseudorandom key.
+pub fn signing_key(secret: &str) -> tower_sessions::cookie::Key {
+    let master = Sha256::digest(secret.as_bytes());
+    tower_sessions::cookie::Key::derive_from(&master)
+}
+
 /// Minimum wall-clock time a human needs to open a form and submit it.
 pub const FORM_MIN_OPEN_MS: u128 = 3_000;
 /// Reject forms that claim to have been open for longer than this.

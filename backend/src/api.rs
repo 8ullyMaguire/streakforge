@@ -1,11 +1,18 @@
 // API handlers — logging (rate-limited), stats, leaderboards, feed, profiles.
 // Rate limits (server-enforced), all keyed on the UTC calendar day so they
 // agree with user_streak_kind and with the Devotion Index multiplier:
-//   - max 1 log per UTC day per user, per kind (habit / affirmation / denial)
+//   - loads wasted (kind = 'habit'): WLW_DAILY_LIMIT per UTC day (default 5) —
+//     a daily budget, not a one-shot cadence
+//   - denials (kind = 'denial'): 1 per UTC day. A denial day is a stand;
+//     "I denied five times today" is not a thing
+//   - affirmations (kind = 'affirmation'): DAILY_LIMIT per UTC day, their own
+//     budget so drill reps neither consume nor pollute the waste allowance
 //   - a waste (habit) and a denial (WLD) are mutually exclusive on the same day:
-//     recording one invalidates the other's eligibility that day
-//   - DAILY_LIMIT is retained only as a backstop against accidental duplicates;
-//     the cadence is the 1-per-UTC-day rule above.
+//     recording one invalidates the other's eligibility that day, whatever is
+//     left of the other's budget
+// `daily_budget()` is the single source of truth for all three; check_rate_limits
+// and compute_stats both read it so the rule can't drift between enforcement and
+// what the UI is told.
 
 use crate::auth::SessionUser;
 use crate::error::{ApiError, ApiResult};
@@ -20,10 +27,23 @@ use time::OffsetDateTime;
 use tower_sessions::Session;
 
 pub const DAILY_LIMIT: i64 = 5;
-/// Cadence: one submission per UTC calendar day, per kind.
+/// Cadence for a kind that is one-per-UTC-day: denials.
 /// Matches user_streak_kind (UTC-day streaks) and the Devotion Index
 /// multiplier, so "submit once a day to grow your streak" is literally true.
 pub const DAILY_WINDOW_HOURS: i64 = 24;
+
+/// Submissions allowed per UTC day for `kind`.
+///
+/// Single source of truth: `check_rate_limits` enforces it and `compute_stats`
+/// reports it, so the limit the UI shows is the limit the server applies.
+/// `wlw_daily_limit` is the operator's `WLW_DAILY_LIMIT` (default 5).
+pub fn daily_budget(kind: LogKind, wlw_daily_limit: i64) -> i64 {
+    match kind {
+        LogKind::Habit => wlw_daily_limit,
+        LogKind::Denial => 1,
+        LogKind::Affirmation => DAILY_LIMIT,
+    }
+}
 
 // ---- Helpers ----
 
@@ -97,6 +117,15 @@ pub struct StatsResponse {
     pub last_60m: i64,
     pub can_log: bool,
     pub next_allowed_at: Option<String>,
+    /// Submissions this kind allows per UTC day (the server's own budget:
+    /// `WLW_DAILY_LIMIT` for a waste, 1 for a denial, `DAILY_LIMIT` for reps).
+    /// Sent rather than duplicated in the UI so the number shown is the number
+    /// enforced.
+    pub daily_limit: i64,
+    /// Submissions still available for this kind today, i.e.
+    /// `daily_limit - today_count`, floored at 0. Drives "3 of 5 left" and the
+    /// enabled state together with `blocked_by_exclusivity`.
+    pub remaining_today: i64,
     /// Seconds until the daily cadence resets (next UTC midnight).
     /// 0 when allowed now. The UI ticks this down locally so the countdown
     /// advances without a reload.
@@ -258,10 +287,15 @@ pub fn next_utc_midnight(now: OffsetDateTime) -> OffsetDateTime {
 
 /// Enforce the daily (UTC) cadence. `pub` so integration tests can assert the
 /// rule directly instead of only inferring it from an HTTP response.
+///
+/// `wlw_daily_limit` is the operator's `WLW_DAILY_LIMIT` (default 5): loads
+/// wasted are a daily BUDGET, denials stay one per day, affirmations keep their
+/// own `DAILY_LIMIT`.
 pub async fn check_rate_limits(
     pool: &PgPool,
     user_id: uuid::Uuid,
     kind: LogKind,
+    wlw_daily_limit: i64,
 ) -> ApiResult<()> {
     let now = OffsetDateTime::now_utc();
     let today_start = now.date().midnight().assume_utc();
@@ -286,7 +320,10 @@ pub async fn check_rate_limits(
 
     // WLWs and WLDs are mutually exclusive: recording a waste today makes a
     // denial today ineligible, and vice versa. Enforced as a hard block, since
-    // the Devotion Index treats the two streaks as competing.
+    // the Devotion Index treats the two streaks as competing. The exclusivity
+    // rule is about the DAY, not about the budget: one waste already spends the
+    // denial's whole day, and it does not matter how many of the waste budget
+    // are left.
     if kind == LogKind::Denial && habits_today >= 1 {
         return Err(ApiError::too_many_requests(
             "You already recorded a load wasted today. WLWs and WLDs are mutually exclusive — a whiteboi who cums cannot claim a denial. Come back tomorrow.",
@@ -298,24 +335,25 @@ pub async fn check_rate_limits(
         ));
     }
 
-    // One submission per UTC day for WLW/WLD. This is the cadence that grows a
-    // streak, so it is the primary rule.
-    //
-    // Affirmations are exempt: the drill keeps its own budget (see DAILY_LIMIT
-    // below) precisely so reps neither consume nor pollute the WLW/WLD
-    // allowance, and a strict 1/day would gut it.
-    if kind != LogKind::Affirmation && kind_today >= 1 {
-        return Err(ApiError::too_many_requests(format!(
-            "Already recorded a {} today. Submit once a day (UTC) to grow your streak — you can again at {}.",
-            kind.as_str(),
-            next_str
-        )));
-    }
-    if kind == LogKind::Affirmation && kind_today >= DAILY_LIMIT {
-        return Err(ApiError::too_many_requests(format!(
-            "Daily limit reached ({} per day). Come back tomorrow.",
-            DAILY_LIMIT
-        )));
+    // The day's budget for this kind. This is the primary rule: it is what
+    // grows a streak (waste) or what a stand is measured in (denial).
+    let budget = daily_budget(kind, wlw_daily_limit);
+    if kind_today >= budget {
+        let msg = match kind {
+            // Names the clock, not just the verdict: a 429 with no time in it
+            // reads as "the button is broken".
+            LogKind::Habit => format!(
+                "Daily limit reached ({budget} loads wasted per UTC day). You can waste again at {next_str}."
+            ),
+            LogKind::Affirmation => format!(
+                "Daily limit reached ({budget} per day). Come back tomorrow."
+            ),
+            LogKind::Denial => format!(
+                "Already recorded a {} today. Submit once a day (UTC) to grow your streak — you can again at {next_str}.",
+                kind.as_str()
+            ),
+        };
+        return Err(ApiError::too_many_requests(msg));
     }
     Ok(())
 }
@@ -371,7 +409,7 @@ pub async fn log_habit(
     }
     let kind = parse_kind(body.kind.as_deref());
 
-    check_rate_limits(&state.pool, user.id, kind).await?;
+    check_rate_limits(&state.pool, user.id, kind, state.cfg.wlw_daily_limit).await?;
 
     sqlx::query("insert into habit_logs (user_id, note, kind) values ($1, $2, $3)")
         .bind(user.id)
@@ -380,7 +418,7 @@ pub async fn log_habit(
         .execute(&state.pool)
         .await?;
 
-    let stats = compute_stats(&state.pool, user.id, kind).await?;
+    let stats = compute_stats(&state.pool, user.id, kind, state.cfg.wlw_daily_limit).await?;
     Ok((StatusCode::CREATED, Json(LogResponse { stats })))
 }
 
@@ -389,7 +427,7 @@ pub async fn get_stats(
     session: Session,
 ) -> ApiResult<Json<StatsResponse>> {
     let user = require_user(&session).await?;
-    let stats = compute_stats(&state.pool, user.id, LogKind::Habit).await?;
+    let stats = compute_stats(&state.pool, user.id, LogKind::Habit, state.cfg.wlw_daily_limit).await?;
     Ok(Json(stats))
 }
 
@@ -399,7 +437,7 @@ pub async fn get_drill(
     session: Session,
 ) -> ApiResult<Json<DrillResponse>> {
     let user = require_user(&session).await?;
-    let stats = compute_stats(&state.pool, user.id, LogKind::Affirmation).await?;
+    let stats = compute_stats(&state.pool, user.id, LogKind::Affirmation, state.cfg.wlw_daily_limit).await?;
     Ok(Json(DrillResponse { stats }))
 }
 
@@ -409,7 +447,7 @@ pub async fn get_denial(
     session: Session,
 ) -> ApiResult<Json<DenialResponse>> {
     let user = require_user(&session).await?;
-    let stats = compute_stats(&state.pool, user.id, LogKind::Denial).await?;
+    let stats = compute_stats(&state.pool, user.id, LogKind::Denial, state.cfg.wlw_daily_limit).await?;
     let lock = lock_info(&state.pool, user.id).await?;
     let next_denial_allowed_in = denial_next_allowed(&state.pool, user.id).await?;
     Ok(Json(DenialResponse { stats, lock, next_denial_allowed_in }))
@@ -502,7 +540,12 @@ async fn lock_info(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<LockInfoResp
     })
 }
 
-async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> ApiResult<StatsResponse> {
+async fn compute_stats(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+    kind: LogKind,
+    wlw_daily_limit: i64,
+) -> ApiResult<StatsResponse> {
     let now = OffsetDateTime::now_utc();
     let hour_ago = now - time::Duration::minutes(60);
     let today_start = now.date().midnight().assume_utc();
@@ -580,12 +623,12 @@ async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> Api
         LogKind::Affirmation => false,
     };
 
-    // Mirrors check_rate_limits exactly: affirmations have their own budget and
-    // are not subject to the 1-per-UTC-day cadence.
-    let can_log = match kind {
-        LogKind::Affirmation => kind_today < DAILY_LIMIT,
-        _ => kind_today < 1 && !blocked_by_exclusivity,
-    };
+    // Mirrors check_rate_limits exactly, off the same daily_budget(): loads
+    // wasted are a budget (WLW_DAILY_LIMIT, default 5), a denial is one per day,
+    // affirmations keep their own DAILY_LIMIT.
+    let budget = daily_budget(kind, wlw_daily_limit);
+    let remaining_today = (budget - kind_today).max(0);
+    let can_log = remaining_today > 0 && !blocked_by_exclusivity;
     // Seconds until the next UTC midnight. The UI ticks this down client-side,
     // so the countdown moves without a reload and flips can_log at zero.
     let next_in_secs = if can_log {
@@ -625,6 +668,8 @@ async fn compute_stats(pool: &PgPool, user_id: uuid::Uuid, kind: LogKind) -> Api
         last_60m,
         can_log,
         next_allowed_at: if can_log { None } else { next_allowed_at(kind_today) },
+        daily_limit: budget,
+        remaining_today,
         next_allowed_in_secs: next_in_secs,
         blocked_by_exclusivity,
         devotion: DevotionIndexResponse {

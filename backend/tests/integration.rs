@@ -829,8 +829,18 @@ async fn lock_total_time_counts(pool: PgPool) {
 // button is broken" rather than an error.
 // ---------------------------------------------------------------------------
 
-use streakforge_api::api::{check_rate_limits, next_utc_midnight, LogKind};
+use streakforge_api::api::{check_rate_limits, daily_budget, next_utc_midnight, LogKind};
 use time::OffsetDateTime;
+
+/// How many logs of `kind` this user already has on the current UTC day.
+async fn kind_today(pool: &PgPool, uid: uuid::Uuid, kind: &str) -> i64 {
+    sqlx::query_scalar("select count(*) from habit_logs where user_id = $1 and kind = $2 and log_date = (now() at time zone 'utc')::date")
+        .bind(uid)
+        .bind(kind)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
 
 /// Insert a log for `uid` on the UTC day `days_ago` days back, at 12:00 UTC.
 /// Noon keeps every case clear of the midnight boundary.
@@ -850,6 +860,10 @@ async fn log_on_day(pool: &PgPool, uid: uuid::Uuid, kind: &str, days_ago: i32) {
     .unwrap();
 }
 
+/// The budget a user gets when the operator sets nothing: `WLW_DAILY_LIMIT`'s
+/// default. Spelled out here so a change to the default has to change a test.
+const WLW_TEST_LIMIT: i64 = 5;
+
 #[sqlx::test(migrations = "./migrations")]
 async fn first_log_of_the_day_is_allowed(pool: PgPool) {
     let uid = sqlx::query_scalar::<_, uuid::Uuid>(
@@ -859,29 +873,115 @@ async fn first_log_of_the_day_is_allowed(pool: PgPool) {
     .await
     .unwrap();
 
-    assert!(check_rate_limits(&pool, uid, LogKind::Habit).await.is_ok());
+    assert!(
+        check_rate_limits(&pool, uid, LogKind::Habit, WLW_TEST_LIMIT)
+            .await
+            .is_ok()
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn second_log_same_utc_day_is_rejected(pool: PgPool) {
+async fn five_wastes_a_day_are_allowed_and_the_sixth_is_not(pool: PgPool) {
+    // Loads wasted are a daily BUDGET, not the one-shot cadence they used to be.
+    // The five allowed ones are the half a "is the sixth rejected" test cannot
+    // see, so they are asserted one at a time.
     let uid = sqlx::query_scalar::<_, uuid::Uuid>(
-        "insert into profiles (username) values ('daily_dup') returning id",
+        "insert into profiles (username) values ('wlw_budget') returning id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    log_on_day(&pool, uid, "habit", 0).await;
+    for n in 1..=5 {
+        assert!(
+            check_rate_limits(&pool, uid, LogKind::Habit, WLW_TEST_LIMIT)
+                .await
+                .is_ok(),
+            "waste {n} of {WLW_TEST_LIMIT} must be allowed"
+        );
+        log_on_day(&pool, uid, "habit", 0).await;
+    }
 
-    let err = check_rate_limits(&pool, uid, LogKind::Habit)
+    let err = check_rate_limits(&pool, uid, LogKind::Habit, WLW_TEST_LIMIT)
         .await
-        .expect_err("a second WLW on the same UTC day must be rejected");
+        .expect_err("the sixth waste of the same UTC day must be rejected");
     assert_eq!(err.status, 429, "expected 429, got {err:?}");
 
-    // The message must name the next allowed time, otherwise the user is told
-    // only "come back tomorrow" with no clock to wait for.
-    let msg = err.message.clone();
-    assert!(msg.contains("UTC"), "message should mention UTC: {msg}");
+    // The message must name both the budget and the clock. Without the time it
+    // reads as "the button is broken"; without the number the user cannot tell
+    // a budget from a bug.
+    assert!(
+        err.message.contains(&WLW_TEST_LIMIT.to_string()),
+        "message should name the budget: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("UTC"),
+        "message should mention UTC: {}",
+        err.message
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn wlw_budget_is_the_configured_number(pool: PgPool) {
+    // Configurability is the ask, so the limit must be an INPUT to enforcement.
+    // 2 rather than the default 5, so a hardcoded 5 cannot pass this: with a
+    // budget of 2 the third waste is already over, and the identical call with a
+    // budget of 10 succeeds — proving the number is read, not stored.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('wlw_config') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for _ in 0..2 {
+        assert!(check_rate_limits(&pool, uid, LogKind::Habit, 2).await.is_ok());
+        log_on_day(&pool, uid, "habit", 0).await;
+    }
+
+    let err = check_rate_limits(&pool, uid, LogKind::Habit, 2)
+        .await
+        .expect_err("a third waste with WLW_DAILY_LIMIT=2 must be rejected");
+    assert_eq!(err.status, 429);
+    assert!(
+        err.message.contains("2 loads wasted per UTC day"),
+        "the message must quote the configured budget: {}",
+        err.message
+    );
+
+    // Same user, same day, wider budget: allowed. The rule is the limit, not a
+    // stored "has logged" flag.
+    assert!(
+        check_rate_limits(&pool, uid, LogKind::Habit, 10)
+            .await
+            .is_ok(),
+        "a larger configured budget must still leave room"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn denial_stays_one_per_utc_day(pool: PgPool) {
+    // Only wastes became a budget. A denial day is a stand, and the operator's
+    // WLW_DAILY_LIMIT must not leak into it.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('wld_cadence') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    log_on_day(&pool, uid, "denial", 0).await;
+
+    let err = check_rate_limits(&pool, uid, LogKind::Denial, WLW_TEST_LIMIT)
+        .await
+        .expect_err("a second denial on the same UTC day must be rejected");
+    assert_eq!(err.status, 429);
+    assert!(
+        err.message.contains("UTC"),
+        "message should mention UTC: {}",
+        err.message
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -899,7 +999,9 @@ async fn a_log_yesterday_no_longer_blocks_today(pool: PgPool) {
     log_on_day(&pool, uid, "habit", 1).await;
 
     assert!(
-        check_rate_limits(&pool, uid, LogKind::Habit).await.is_ok(),
+        check_rate_limits(&pool, uid, LogKind::Habit, WLW_TEST_LIMIT)
+            .await
+            .is_ok(),
         "yesterday's log must not block today"
     );
 }
@@ -913,16 +1015,25 @@ async fn wlw_and_wld_are_mutually_exclusive(pool: PgPool) {
     .await
     .unwrap();
 
+    // ONE waste spends the whole day, even though the waste budget (5) has four
+    // left in it. Exclusivity is about the day, not about the budget.
     log_on_day(&pool, uid, "habit", 0).await;
     assert_eq!(
-        check_rate_limits(&pool, uid, LogKind::Denial)
+        check_rate_limits(&pool, uid, LogKind::Denial, WLW_TEST_LIMIT)
             .await
             .expect_err("a denial after a waste today must be rejected")
             .status,
         429
     );
+    // ...and the waste budget itself is barely scratched by that one log.
+    assert!(
+        check_rate_limits(&pool, uid, LogKind::Habit, WLW_TEST_LIMIT)
+            .await
+            .is_ok(),
+        "one waste must not exhaust a budget of five"
+    );
 
-    // and the reverse
+    // and the reverse: a denial blocks every remaining waste slot
     let uid2 = sqlx::query_scalar::<_, uuid::Uuid>(
         "insert into profiles (username) values ('daily_excl2') returning id",
     )
@@ -932,7 +1043,7 @@ async fn wlw_and_wld_are_mutually_exclusive(pool: PgPool) {
 
     log_on_day(&pool, uid2, "denial", 0).await;
     assert_eq!(
-        check_rate_limits(&pool, uid2, LogKind::Habit)
+        check_rate_limits(&pool, uid2, LogKind::Habit, WLW_TEST_LIMIT)
             .await
             .expect_err("a waste after a denial today must be rejected")
             .status,
@@ -942,9 +1053,9 @@ async fn wlw_and_wld_are_mutually_exclusive(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn affirmations_keep_their_own_budget(pool: PgPool) {
-    // Affirmations are neither WLW nor WLD, so the 1/day cadence must not apply
-    // to them — the drill would be unusable. But they must not be unlimited
-    // either, and five is the documented daily ceiling.
+    // Affirmations are neither WLW nor WLD, so neither the waste budget nor the
+    // 1/day denial cadence applies to them — the drill would be unusable. But
+    // they must not be unlimited either, and five is the documented ceiling.
     let uid = sqlx::query_scalar::<_, uuid::Uuid>(
         "insert into profiles (username) values ('daily_aff') returning id",
     )
@@ -954,14 +1065,16 @@ async fn affirmations_keep_their_own_budget(pool: PgPool) {
 
     for _ in 0..5 {
         assert!(
-            check_rate_limits(&pool, uid, LogKind::Affirmation).await.is_ok(),
+            check_rate_limits(&pool, uid, LogKind::Affirmation, WLW_TEST_LIMIT)
+                .await
+                .is_ok(),
             "first five reps of the day must be allowed"
         );
         log_on_day(&pool, uid, "affirmation", 0).await;
     }
 
     assert_eq!(
-        check_rate_limits(&pool, uid, LogKind::Affirmation)
+        check_rate_limits(&pool, uid, LogKind::Affirmation, WLW_TEST_LIMIT)
             .await
             .expect_err("the sixth rep must be rejected")
             .status,
@@ -970,7 +1083,55 @@ async fn affirmations_keep_their_own_budget(pool: PgPool) {
 
     // An exhaustion of reps must not block a WLW, and a WLW must not be
     // blocked by reps: they share a day but not a budget.
-    assert!(check_rate_limits(&pool, uid, LogKind::Habit).await.is_ok());
+    assert!(
+        check_rate_limits(&pool, uid, LogKind::Habit, WLW_TEST_LIMIT)
+            .await
+            .is_ok()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn enforcement_matches_the_reported_budget_for_every_kind(pool: PgPool) {
+    // daily_budget() is what compute_stats tells the UI the limit is; the same
+    // function decides what check_rate_limits enforces. They can only drift if
+    // someone stops using the shared helper, so this walks all three kinds at a
+    // NON-default budget and asserts the Nth submission is the last one allowed.
+    for (kind, label) in [
+        (LogKind::Habit, "habit"),
+        (LogKind::Denial, "denial"),
+        (LogKind::Affirmation, "affirmation"),
+    ] {
+        let budget = daily_budget(kind, 3);
+        let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+            "insert into profiles (username) values ($1) returning id",
+        )
+        .bind(format!("budget_{label}"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        for n in 1..=budget {
+            assert!(
+                check_rate_limits(&pool, uid, kind, 3).await.is_ok(),
+                "{label}: submission {n} of {budget} must be allowed"
+            );
+            log_on_day(&pool, uid, label, 0).await;
+        }
+        // Exactly `budget` submissions are in. The next one is the first that
+        // is over, not the budget-th.
+        assert_eq!(kind_today(&pool, uid, label).await, budget);
+        assert_eq!(
+            check_rate_limits(&pool, uid, kind, 3)
+                .await
+                .expect_err(&format!(
+                    "{label}: submission {} must be rejected (budget {budget})",
+                    budget + 1
+                ))
+                .status,
+            429,
+            "{label}: the budget the UI is told must be the budget enforced"
+        );
+    }
 }
 
 #[test]

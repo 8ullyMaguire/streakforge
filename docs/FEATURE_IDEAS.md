@@ -14,7 +14,8 @@ L = more than a week.
 
 ## Where the product actually stands
 
-Shipped and verified: daily UTC cadence (one log per kind per day), the
+Shipped and verified: UTC-day limits (five wastes a day — `WLW_DAILY_LIMIT` — and
+one denial a day), the
 exclusivity rule (a waste and a denial can't both count on the same day), the
 Whiteboi Devotion Index with tiered multipliers, 30-day score decay with a
 separate lifetime total, the chastity lock, drill, feed, profile, and doctrine.

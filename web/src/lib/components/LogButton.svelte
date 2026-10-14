@@ -46,6 +46,10 @@
 
 	let serverSecs = $derived(stats()?.next_allowed_in_secs ?? 0);
 	let blocked = $derived(stats()?.blocked_by_exclusivity ?? false);
+	// The budget comes from the server, never from a constant copied here: the
+	// number shown is the number enforced (`WLW_DAILY_LIMIT`, default 5).
+	let dailyLimit = $derived(stats()?.daily_limit ?? 0);
+	let remainingToday = $derived(stats()?.remaining_today ?? 0);
 	let remaining = $derived.by(() => {
 		// `tick` is read purely for its reactivity; the value is irrelevant.
 		void tick;
@@ -86,7 +90,17 @@
 		</p>
 	{:else if !canLog && remaining > 0}
 		<p style="color:var(--text-dim);font-size:13px;margin:0;">
-			One submission per day (UTC). Your streak is safe — it resets at midnight.
+			{#if kind === 'denial'}
+				One submission per day (UTC). Your streak is safe — it resets at midnight.
+			{:else}
+				Daily limit reached ({dailyLimit} per day, UTC). It resets at midnight.
+			{/if}
+		</p>
+	{:else if canLog && kind !== 'denial'}
+		<!-- Loads wasted are a daily BUDGET, not a cadence, so say how much is
+		     left: a fifth waste should be a choice, not a surprise 429. -->
+		<p style="color:var(--text-dim);font-size:13px;margin:0;">
+			{remainingToday} of {dailyLimit} loads wasted left today (UTC).
 		</p>
 	{/if}
 

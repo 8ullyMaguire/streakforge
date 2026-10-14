@@ -36,10 +36,11 @@ Plus `STATUS.md` for the living dev-status checklist.
   a cycling affirmation deck, and a "REPEAT" button. Affirmation reps log under
   a separate `kind` with their own rate-limit budget (1/hr, 5/day), so the drill
   doesn't consume (or pollute) your habit budget.
-- **Rate limiting (server-enforced, per kind)**:
-  - Max 1 log per 60 minutes per user.
-  - Max 5 logs per UTC calendar day per user.
-  - Clear 429 error messages with "next allowed at" hints.
+- **Rate limiting (server-enforced, per kind, per UTC calendar day)**:
+  - Loads wasted: **5 per day**, configurable with `WLW_DAILY_LIMIT` (1–100).
+  - Denials: 1 per day. A denial day is a stand.
+  - Drill reps: 5 per day, their own budget.
+  - Clear 429 messages that name both the limit and the time it resets.
 - **Personal dashboard** — today's count, current streak, longest streak, this
   week, all-time, recent logs, and a 30-day streak heatmap.
 - **Community leaderboards** — Daily (UTC), Weekly (Monday UTC start), and
@@ -219,6 +220,28 @@ cd web
 npm run check
 npm test   # vitest
 ```
+
+## Configuration
+
+Read from the environment at startup (`backend/src/config.rs`):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `DATABASE_URL` | local streakforge DB | Postgres |
+| `SESSION_SECRET` | dev placeholder | **sessions are signed with this.** The signing key is derived from it, so it must be set and must not change between deploys — changing it signs every user out once. Set in prod (64 hex chars). |
+| `SESSION_TTL_DAYS` | `30` | days of inactivity before a session expires (1–365) |
+| `WLW_DAILY_LIMIT` | `5` | loads wasted allowed per UTC day per user (1–100) |
+| `SECURE_COOKIES` | `0` | `1` behind HTTPS (sets `Secure` on the session cookie) |
+| `PUBLIC_URL` | `http://127.0.0.1:8787` | CORS origin |
+| `WEB_BUILD_DIR` | `./web/build` | static frontend root |
+| `MIGRATIONS_DIR` | `./migrations` | sqlx migrations |
+| `MANIFESTOS_DIR` | `./manifestos` | doctrine pages |
+| `BIND_ADDR` | `127.0.0.1:8787` | listen address |
+
+An out-of-range or unparsable limit falls back to its default and logs a warning; it
+is never silently clamped to 0, which would lock every user out of logging.
+
+---
 
 ## Deployment Notes
 

@@ -74,8 +74,8 @@
 			KNOW YOUR PLACE
 		</h1>
 		<p style="color:var(--text-dim);font-size:14px;margin:0 0 20px;">
-			One submission per day (UTC). Miss a day and the streak resets. A denial and a waste
-			are mutually exclusive.
+			Loads wasted are a budget of five a day (UTC) — miss every one and the streak
+			resets. A denial and a waste are mutually exclusive.
 		</p>
 
 		<!-- Whiteboi Devotion Index -->

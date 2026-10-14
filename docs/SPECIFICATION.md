@@ -298,7 +298,24 @@ Indexes:
 ### 6.3 Sessions (tower-sessions)
 
 Created by `tower-sessions-sqlx-store`'s `migrate()` at startup: schema `tower_sessions`,
-table `session`. Cookie is signed with `SESSION_SECRET`. Expiry: `OnSessionEnd`.
+table `session`.
+
+- **Cookie**: `streakforge_session`, signed (`auth::signing_key`), `HttpOnly`,
+  `SameSite=Lax`, `Secure` when `SECURE_COOKIES=1`.
+- **Signing key**: derived from `SESSION_SECRET` (SHA-256 → HKDF via
+  `cookie::Key::derive_from`), so it is the same key in every process. It MUST be:
+  `Key::generate()` makes a new random key per start, which invalidates the cookie
+  of every signed-in user on every restart while their session row sits untouched
+  in Postgres. That is what was happening — 3,339 restarts on 2026-09-27 and 1,306
+  on 2026-10-01, each one signing everyone out. Verified by restarting the process:
+  `/api/auth/me` went 200 → 401 with the session row still present. Rotating
+  `SESSION_SECRET` is the only thing that should change this key, and doing so signs
+  everyone out once, deliberately.
+- **Expiry**: `OnInactivity(SESSION_TTL_DAYS)` — 30 days by default, refreshed
+  whenever the session is saved, so a returning user stays signed in for a month of
+  not visiting. (This section previously claimed `OnSessionEnd`, and claimed the
+  cookie was signed with `SESSION_SECRET` when the secret was never read at all:
+  both drifted from the code and were corrected 2026-10-14.)
 
 ---
 
@@ -723,14 +740,29 @@ space, capitalize first letter).
 
 ## 14. Rate Limiting
 
-- **Values**: `HOURLY_LIMIT = 1`, `DAILY_LIMIT = 5` (in `api.rs`).
+- **Values**: per kind, per UTC calendar day, via `daily_budget()` in `api.rs` —
+  the single source of truth that both enforcement and the stats response read:
+  - loads wasted (`habit`): `WLW_DAILY_LIMIT`, **default 5** (a daily *budget*)
+  - denials (`denial`): 1. A denial day is a stand; "I denied five times today" is
+    not a thing, so the waste budget deliberately does not leak into it
+  - affirmations (`affirmation`): `DAILY_LIMIT = 5`, their own budget so drill reps
+    neither consume nor pollute the waste allowance
 - **Granularity**: per user, per kind.
-- **Window**: rolling 60-minute window (query-based) + fixed UTC calendar day.
-- **Enforcement**: before insert, in `check_rate_limits()`; 429 with a clear message
-  ("Hourly limit reached (1 per hour). You can log again at <iso>." or "Daily limit
-  reached (5 per day). Come back tomorrow.").
-- `next_allowed_at` computed in the stats response: +60min for hourly cap, midnight UTC
-  for daily cap.
+- **Window**: fixed UTC calendar day (`log_date`), not a rolling 24h window — a log
+  at 23:50 must not lock a user out until 23:50 the next day.
+- **Exclusivity is about the DAY, not the budget**: one waste spends the denial's
+  whole day even with four waste slots left, and any denial blocks every remaining
+  waste slot.
+- **Enforcement**: before insert, in `check_rate_limits()`; 429 naming both the
+  budget and the clock ("Daily limit reached (5 loads wasted per UTC day). You can
+  waste again at <iso>.").
+- `next_allowed_at` / `next_allowed_in_secs` in the stats response: midnight UTC when
+  the kind is exhausted or exclusive-blocked, 0 when a submission is allowed.
+- `daily_limit` / `remaining_today` in the stats response are the same budget the
+  server enforces, so the UI cannot show a number the server does not apply.
+- `WLW_DAILY_LIMIT` is read at startup and bounded to 1..=100; a garbage or
+  out-of-range value falls back to 5 and logs a warning rather than becoming a limit
+  that locks everyone out.
 - No Redis needed for v1 (documented as a future upgrade path).
 
 ---

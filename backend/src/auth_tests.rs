@@ -170,3 +170,40 @@ fn form_check(form: &AuthForm) -> Result<(), ()> {
     }
     Ok(())
 }
+
+// ---- Session-cookie signing key ----
+//
+// The bug this pins, observed in production: `cookie::Key::generate()` at
+// startup makes a NEW random key per process, and the session cookie's value is
+// an HMAC over the session id under that key. Every restart therefore orphans
+// every cookie already in a browser — the session row is still in Postgres and
+// nothing can point at it — so a deploy signs out every logged-in user. The
+// signing key must be a function of configuration, not of process lifetime.
+
+use crate::auth::signing_key;
+
+#[test]
+fn signing_key_is_stable_for_one_secret() {
+    // Two "processes" (two calls) must agree, or a restart signs everyone out.
+    let first = signing_key("s3cret-configured-once");
+    let second = signing_key("s3cret-configured-once");
+    assert_eq!(
+        first.signing(),
+        second.signing(),
+        "the same SESSION_SECRET must derive the same signing key in every process"
+    );
+}
+
+#[test]
+fn signing_key_changes_with_the_secret() {
+    // Rotating the secret MUST rotate the key — otherwise a leaked secret could
+    // not be retired.
+    let a = signing_key("secret-one");
+    let b = signing_key("secret-two");
+    assert_ne!(a.signing(), b.signing(), "a different secret must give a different key");
+    // And a key of a different length must not panic: the secret is SHA-256'd
+    // to exactly 32 bytes first, because derive_from panics below that.
+    let short = signing_key("x");
+    assert_ne!(short.signing(), a.signing());
+    assert_eq!(short.signing().len(), a.signing().len());
+}

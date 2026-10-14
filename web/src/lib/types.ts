@@ -89,6 +89,11 @@ export interface Stats {
 	last_60m: number;
 	can_log: boolean;
 	next_allowed_at: string | null;
+	/** submissions this kind allows per UTC day (the server's own budget:
+	 *  WLW_DAILY_LIMIT for a waste, 1 for a denial, DAILY_LIMIT for reps) */
+	daily_limit: number;
+	/** submissions still available for this kind today (never negative) */
+	remaining_today: number;
 	/** seconds until the daily cadence resets (next UTC midnight); 0 when allowed now */
 	next_allowed_in_secs: number;
 	/** true when the OTHER exclusive kind already ran today */

@@ -68,15 +68,20 @@ noob_forger, late_night (3 today).
 ```bash
 cd backend
 DATABASE_URL=postgres://streakforge:***@127.0.0.1:5432/streakforge_dev \
-  cargo test                           # 48 tests: 11 unit + 37 integration
+  cargo test                           # 56 tests: 16 unit + 40 integration
 
 cd ../web
 npm run check                          # svelte-check
 npx vitest run                         # 69 tests (8 files)
 ```
 
-Counts re-measured 2026-09-30; the 17/47 above had been stale in a third
-direction (the plan for the KPI dashboard quoted 19/48, also wrong).
+Counts re-measured 2026-10-14 (16/40); the 17/47 and 11/37 lines before that had
+been stale in a third direction (the plan for the KPI dashboard quoted 19/48, also
+wrong). Re-measure rather than trusting any of these numbers.
+
+The integration tests need a Postgres the role can create databases in
+(`#[sqlx::test]` makes a throwaway DB per test) — `DATABASE_URL` must point at the
+cluster, and the database named in it may not exist.
 
 **The role and database must exist before the suite will run.** `sqlx::test`
 provisions a scratch database per test by cloning the one in `DATABASE_URL`, so
@@ -123,8 +128,21 @@ starting the service (or rotate them there):
 
 ```bash
 SECRET=$(openssl rand -hex 32)
-ssh thinkcentre "sudo sed -i 's|^SESSION_SECRET=.*|SESSION_SECRET=$SECRET|' /personal/documents/code/streakforge/.env && sudo systemctl restart streakforge"
+ssh thinkcentre "sudo sed -i 's|^SESSION_SECRET=.*|SESSION_SECRET=$SECRET|' /opt/streakforge/.env && sudo systemctl restart streakforge"
 ```
+
+**Rotating `SESSION_SECRET` signs every user out once** — the session cookie is
+signed with a key derived from it (see SPEC §6.3). That is intended for a rotation
+and unacceptable by accident: do NOT let a deploy rewrite it. The deploy script only
+manages `MIGRATIONS_DIR` and `MANIFESTOS_DIR` in `/opt/streakforge/.env`.
+
+Two further session/limit knobs live in the same `.env` (both optional, both
+defaulted, both read at startup):
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `SESSION_TTL_DAYS` | `30` | days of inactivity before a session expires |
+| `WLW_DAILY_LIMIT` | `5` | loads wasted allowed per UTC day per user |
 
 ### 3.2 What lives where on thinkcentre
 
@@ -140,6 +158,12 @@ ssh thinkcentre "sudo sed -i 's|^SESSION_SECRET=.*|SESSION_SECRET=$SECRET|' /per
 
 ### 3.3 systemd unit (as installed)
 
+Verified against `systemctl cat streakforge` on thinkcentre, 2026-10-14. The paths
+are under `/opt` and `/var/www`, not `/personal`: the binary used to run from the
+`/personal` NFS mount, and when that mount wedged the kernel could not page in the
+process's code pages, so SIGBUS killed the process mid-request (three times, in
+August). Local ext4 is immune. This block had drifted from the live unit.
+
 ```ini
 [Unit]
 Description=StreakForge habit tracker API (Rust)
@@ -149,10 +173,10 @@ Wants=postgresql.service
 [Service]
 Type=simple
 User=alvaro
-WorkingDirectory=/personal/documents/code/streakforge
-EnvironmentFile=/personal/documents/code/streakforge/.env
+WorkingDirectory=/opt/streakforge
+EnvironmentFile=/opt/streakforge/.env
 Environment=PATH=/home/alvaro/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/personal/documents/code/streakforge/streakforge-api
+ExecStart=/opt/streakforge/streakforge-api
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -161,6 +185,11 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 ```
+
+`Restart=on-failure` matters beyond uptime now: a restart used to sign every user
+out (the signing key was regenerated per process). That is fixed, so restarts are
+survivable — but the restart *count* is still worth watching, because a crash loop
+of 3,339 restarts in a day was the symptom that hid the logout bug.
 
 ### 3.4 Cloudflare tunnel
 
