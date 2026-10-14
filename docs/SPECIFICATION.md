@@ -1116,8 +1116,11 @@ Nothing on the client side explains it and `actions/runs` reported `total_count:
 status` lists the `workflow` scope, and the same token pushed the commits that arrived; the
 YAML is not the problem — GitHub accepted an edit adding a trigger to the file and reported
 the workflow's id unchanged (`384814692`); Actions are not disabled for the repo — a
-**manual `gh workflow run ci.yml --ref main` produced run `38643450176` on `32e0b90`**, and
-the jobs report below are from it.
+**manual `gh workflow run ci.yml --ref main` produced run `38643450176` on `32e0b90`**:
+**both jobs success**, `backend (cargo test)` reporting 22 lib + 48 integration + 10 route =
+80 passed / 0 failed and `frontend (check, test, build)` green — the same numbers as the
+local gate, on a machine that is not this one. The current commit has a URL after all:
+<https://github.com/8ullyMaguire/streakforge/actions/runs/38643450176>.
 
 So the gate is usable, just not automatic. `workflow_dispatch:` is now in the triggers, and
 after a push that matters:
@@ -1134,7 +1137,7 @@ green" claim must name the commit AND say it was dispatched by hand.
 
 ### 16.4 Router-level tests (`tests/routes.rs`)
 
-Nine tests that mount the real router (`.github/workflows/ci.yml` runs them with the
+Ten tests that mount the real router (`.github/workflows/ci.yml` runs them with the
 rest of the suite) and send it HTTP requests.
 
 **Why they exist.** Every public page here reads a SQL function whose OUT list SQLx
