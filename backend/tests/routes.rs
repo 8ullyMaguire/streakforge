@@ -396,4 +396,23 @@ async fn stats_reports_the_budget_and_the_decay_countdown(pool: PgPool) {
     // The author's own note comes back here — that half of item 01 must not
     // regress while the public half stays closed.
     assert_eq!(body["recent_logs"][0]["note"], "probe");
+
+    // Item 15's clock — the assertion whose absence let the dashboard say
+    // "4 of 5 left today" for most of every day. The two countdowns answer
+    // different questions and must not share an answer:
+    assert_eq!(
+        body["can_log"], true,
+        "4 of 5 left means another log is allowed right now"
+    );
+    assert_eq!(
+        body["next_allowed_in_secs"], 0,
+        "the lock has nothing to wait for, so ITS countdown is legitimately 0"
+    );
+    let reset = body["secs_until_reset"]
+        .as_i64()
+        .expect("secs_until_reset must be a number");
+    assert!(
+        reset > 0 && reset <= 86_400,
+        "the day's allowance still has a clock ({reset}s until UTC midnight), even while a log is allowed"
+    );
 }

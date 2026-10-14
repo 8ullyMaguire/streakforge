@@ -1,7 +1,12 @@
 // Countdown formatting for the daily (UTC) cadence.
 //
-// The server sends `next_allowed_in_secs`, the number of seconds until the next
-// UTC midnight at the moment the response was built. This module formats it and,
+// The server sends `secs_until_reset`, the number of seconds until the next UTC
+// midnight at the moment the response was built.
+//
+// NOT `next_allowed_in_secs`: that one is zeroed whenever a log is allowed right
+// now, which is the normal case, so a label built on it read "4 of 5 left today"
+// instead of "4 of 5 left · resets in 5h 3m" for most of every day. Two different
+// questions were sharing one answer. This module formats it and,
 // crucially, computes it against a caller-supplied `now` so it can be TICKED
 // down each second without a reload and without trusting the browser clock to
 // agree with the server's.

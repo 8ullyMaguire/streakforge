@@ -114,6 +114,10 @@ export interface Stats {
 	remaining_today: number;
 	/** seconds until the daily cadence resets (next UTC midnight); 0 when allowed now */
 	next_allowed_in_secs: number;
+	/** Seconds until the daily budget refills (next UTC midnight). Unlike
+	 * `next_allowed_in_secs` this is never 0 just because a log is allowed now,
+	 * which is what the dashboard's "resets in 4h 12m" needs. */
+	secs_until_reset: number;
 	/** true when the OTHER exclusive kind already ran today */
 	blocked_by_exclusivity: boolean;
 	devotion: DevotionIndex;

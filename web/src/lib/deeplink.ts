@@ -24,6 +24,8 @@ export interface ParsedKind {
 	kind: LogKindName;
 	/** The link named a kind this site does not have. */
 	fellBack: boolean;
+	/** Why the page is not doing what the link literally asked for. */
+	reason?: 'unknown' | 'mismatch';
 }
 
 export function parseKind(raw: string | null | undefined): ParsedKind {
@@ -39,6 +41,28 @@ export function kindLabel(kind: LogKindName): string {
 	if (kind === 'denial') return 'a denial';
 	if (kind === 'affirmation') return 'a drill rep';
 	return 'a waste';
+}
+
+/**
+ * Resolve the kind for the confirm page when the URL names it in the PATH, as
+ * `/log/habit` (docs/100_IDEAS.md #14 names that form literally, and it is the
+ * one a person types into a phone shortcut).
+ *
+ * The path wins, because it is the more specific intent, and a query string that
+ * disagrees with it is REPORTED rather than silently ignored: `/log/denial?kind=habit`
+ * is a link that contradicts itself, and quietly recording one of the two is how a
+ * user ends up with a log they did not ask for.
+ */
+export function resolveKind(
+	pathKind: LogKindName | null | undefined,
+	queryKind: string | null | undefined
+): ParsedKind {
+	if (!pathKind) return parseKind(queryKind);
+	const q = (queryKind ?? '').trim().toLowerCase();
+	if (q.length === 0) return { kind: pathKind, fellBack: false };
+	return q === pathKind
+		? { kind: pathKind, fellBack: false }
+		: { kind: pathKind, fellBack: true, reason: 'mismatch' };
 }
 
 export function clampNote(raw: string | null | undefined, max = NOTE_MAX): string {

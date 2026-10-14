@@ -126,10 +126,19 @@ pub struct StatsResponse {
     /// `daily_limit - today_count`, floored at 0. Drives "3 of 5 left" and the
     /// enabled state together with `blocked_by_exclusivity`.
     pub remaining_today: i64,
-    /// Seconds until the daily cadence resets (next UTC midnight).
-    /// 0 when allowed now. The UI ticks this down locally so the countdown
-    /// advances without a reload.
+    /// Seconds until the next log is PERMITTED: 0 when one is allowed now.
+    /// This is about the lock, not about the day -- see `secs_until_reset`.
     pub next_allowed_in_secs: i64,
+    /// Seconds until the daily budget refills (next UTC midnight), regardless of
+    /// whether a log is allowed right now.
+    ///
+    /// WHY THIS IS A SECOND FIELD (docs/100_IDEAS.md #15 asks the dashboard to
+    /// say "3 of 5 left, resets in 4h12m"): `next_allowed_in_secs` is zeroed
+    /// whenever `can_log` is true, which is the normal state for most of the day,
+    /// so the one countdown the item is about was the one case it could not
+    /// report. The two questions are genuinely different -- "may I log now" and
+    /// "when does the allowance come back" -- and they were sharing an answer.
+    pub secs_until_reset: i64,
     /// True when today's submission is blocked because the OTHER exclusive kind
     /// already ran (a waste blocks a denial, a denial blocks a waste).
     pub blocked_by_exclusivity: bool,
@@ -659,6 +668,9 @@ async fn compute_stats(
     } else {
         (next_utc_midnight(now) - now).whole_seconds().max(0)
     };
+    // The same clock, WITHOUT the `can_log` gate: the budget refills at UTC
+    // midnight whether or not the user is allowed to log this second.
+    let secs_until_reset = (next_utc_midnight(now) - now).whole_seconds().max(0);
 
     // Whiteboi Devotion Index for this user, under the 30-day decay rule: logs
     // older than 30 days no longer count, so an inactive user reads 0 here while
@@ -694,6 +706,7 @@ async fn compute_stats(
         daily_limit: budget,
         remaining_today,
         next_allowed_in_secs: next_in_secs,
+        secs_until_reset,
         blocked_by_exclusivity,
         devotion: DevotionIndexResponse {
             wlw,

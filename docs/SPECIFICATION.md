@@ -1428,6 +1428,61 @@ its cause before it is believed.
 | 15 | `/api/stats` → `daily_limit=5`, `remaining_today=3` after two logs of the five |
 | 16 | fresh log → `days_until_decay=30`, `decayed=false`; the dashboard renders "30 days" and "Your score resets in 5 days" when a ledger is backdated 25 days |
 
+**2026-10-14 (tier 1+2) — third reading of the ideas, clause by clause**
+
+The previous pass re-read the sixteen ideas for *weaker implementations*. This one read them
+for **clauses never shipped at all**, one sentence at a time, and found four. All four are
+now closed. As before, none is a bug a user would have reported; three are cases where the
+deliverable shipped one surface away from the one the item names.
+
+| # | the clause | what was there | what is there now |
+|---|---|---|---|
+| 03 | the dump must survive the catastrophe the item names ("turns *the disk died* from the end of the site into an hour") | dump AND rehearsal both on thinkcentre — the disk that dies | `scripts/offhost-backup.sh` pulls the newest dump to the other host nightly, with five checks and a pruning window |
+| 10 | "a line **on the dashboard**" | the endpoint existed and the LANDING page rendered it; the dashboard, where a logging user looks, did not | the dashboard shows it, linked to `/kpi` |
+| 14 | "a confirm page at **/log/habit**" | only `/log?kind=habit` existed; the path form reached the app's not-found page | `/log/habit`, `/log/denial`, `/log/affirmation` are real routes |
+| 15 | "**resets in 4h12m**" | the label read "4 of 5 left today" for most of every day | "4 of 5 left · resets in 1h 54m" |
+
+**15's cause is worth recording, because the fix is one field and the bug is a meaning.**
+`next_allowed_in_secs` was computed as `if can_log { 0 } else { seconds_until_utc_midnight }`
+— one field answering two different questions ("may I log now?" and "when does the allowance
+refill?"). For most of every day `can_log` is true, so the day's clock was reported as zero,
+`budgetLabel` took its "no countdown to show" branch, and the item's own sentence never
+rendered. There are now two fields, and a route test asserts the distinction that was
+missing: `can_log == true` **while** `next_allowed_in_secs == 0` **while**
+`secs_until_reset` is between 1 and 86400.
+
+**Observed live after the deploy**, with the API numbers behind it:
+
+```
+dashboard:  4 of 5 left · resets in 1h 54m        (card)
+dashboard:  2 whitebois denied today · 3 wasted   (linked to /kpi)
+/api/stats: can_log=true  next_allowed_in_secs=0  secs_until_reset=6826  remaining=4/5
+/log/denial   →  "This will record a denial."
+/log/habit    →  "This will record a waste."
+/log/affirmation → "This will record a drill rep."
+```
+
+**The off-host copy, verified rather than asserted:** pulled 72476 bytes, `pg_restore lists 80
+entries`, a re-run copied nothing (free and idempotent), and the cron entry installed twice
+leaves exactly one line. Each check has a control that makes it fire, and each message names
+which check failed — a dump aged three days (`72h old (limit 48h). That is a BACKUP failure,
+not a copy failure`), a 200-byte dump (`floor 10000B`), and no dump at all (`the nightly job
+is not running`). All three exit 1. It is off-HOST, not off-SITE: a second machine in the same
+building does not survive the building, and OPERATIONS says so rather than implying cover.
+
+**Three mutations, each reddening only the tests that assert the behaviour:** `resolveKind`
+never reporting a mismatch → exactly the two mismatch tests; `todayLine`'s empty state removed
+→ exactly the two empty-state tests; `secs_until_reset` reusing the gated countdown → exactly
+`stats_reports_the_budget_and_the_decay_countdown`, with the message "the day's allowance
+still has a clock (0s until UTC midnight), even while a log is allowed".
+
+**One observation I could not explain, recorded because it was seen:** in a combined
+`cargo test` run the integration target reported `1 passed; 47 failed` in 0.01s — a
+connection-level failure, not a test failure. The same target passed 48/48 immediately after,
+alone and in a second full run, and the whole suite is green. The failure text was lost
+because the command filtered on `^test result:`. If it recurs, capture the whole output;
+until then the honest statement is "seen once, not reproduced, cause unknown".
+
 **2026-10-14 (tier 1+2 audit) — local gates**
 
 - **Backend**: `cargo test` → 22 lib + 48 integration + **10 router-level** (`tests/routes.rs`)

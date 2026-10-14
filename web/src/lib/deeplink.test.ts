@@ -1,7 +1,15 @@
 // Deep-link parsing (item 14). The two rules that matter beyond formatting are
 // the fallback for an unknown kind and the open-redirect guard on `next=`.
 import { describe, it, expect } from 'vitest';
-import { parseKind, kindLabel, clampNote, safeNext, NOTE_MAX, LOG_KINDS } from './deeplink';
+import {
+	parseKind,
+	resolveKind,
+	kindLabel,
+	clampNote,
+	safeNext,
+	NOTE_MAX,
+	LOG_KINDS
+} from './deeplink';
 
 describe('parseKind', () => {
 	it('accepts every kind the API takes', () => {
@@ -23,6 +31,46 @@ describe('parseKind', () => {
 		expect(parseKind('')).toEqual({ kind: 'habit', fellBack: false });
 		expect(parseKind(null)).toEqual({ kind: 'habit', fellBack: false });
 		expect(parseKind(undefined)).toEqual({ kind: 'habit', fellBack: false });
+	});
+});
+
+describe('resolveKind (the /log/<kind> path form)', () => {
+	it('uses the path kind when there is no query', () => {
+		// docs/100_IDEAS.md #14 names /log/habit literally, and that is the URL a
+		// person types into a phone shortcut.
+		expect(resolveKind('denial', null)).toEqual({ kind: 'denial', fellBack: false });
+		expect(resolveKind('habit', '')).toEqual({ kind: 'habit', fellBack: false });
+	});
+
+	it('is identical to the query form when only the query is present', () => {
+		// The path form must not change the behaviour of the URL that already worked.
+		expect(resolveKind(null, 'denial')).toEqual(parseKind('denial'));
+		expect(resolveKind(null, 'waste')).toEqual(parseKind('waste'));
+	});
+
+	it('REPORTS a link that contradicts itself instead of choosing silently', () => {
+		// Path wins, but a page that quietly picked one of two answers would file
+		// the other kind in someone's history without saying so.
+		expect(resolveKind('denial', 'habit')).toEqual({
+			kind: 'denial',
+			fellBack: true,
+			reason: 'mismatch'
+		});
+	});
+
+	it('reports an unknown query kind beside a path kind', () => {
+		expect(resolveKind('habit', 'banana')).toEqual({
+			kind: 'habit',
+			fellBack: true,
+			reason: 'mismatch'
+		});
+	});
+
+	it('agrees with itself without a warning when both name the same kind', () => {
+		expect(resolveKind('affirmation', 'AFFIRMATION ')).toEqual({
+			kind: 'affirmation',
+			fellBack: false
+		});
 	});
 });
 

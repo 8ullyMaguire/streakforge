@@ -10,6 +10,34 @@ Owner's standing rule applies: a plan must be complete enough to implement from 
 code that lands is in `backend/` and `web/`; this file is the reasoning and the acceptance
 test for each item.
 
+## Third pass — four clauses that were never shipped (2026-10-14, late)
+
+Two things are worth knowing about this plan's own history, because both are how an
+acceptance line goes wrong rather than how the code does:
+
+1. **A plan line can accept less than the idea asked for.** The audit pass found five of
+   those (03's rehearsal untimed, 06's backoff flat and unlogged, 09's test comparing
+   signatures, 12's glossary footer-only, 16's notice in unreachable markup) and closed them.
+2. **A plan line can accept something that was never built at all.** This pass found four:
+   03's dump did not survive the catastrophe the item names, 10's line was not on the
+   dashboard, 14's path form did not exist, and 15's clock never rendered. All four are
+   closed; the evidence is in SPEC §21 under "third reading".
+
+What they have in common is a lesson about *where* the acceptance test was pointed: each was
+verified at the layer that was easy to test (the endpoint, the script, the module) and not at
+the layer the item named (the page a user sees). For item 15 the two layers even disagreed
+about the *meaning* of a number, and the endpoint-level test passed while the sentence a user
+reads was wrong for most of every day.
+
+Acceptance for the four, in the smallest form that would have caught each:
+
+| # | command | must show |
+|---|---|---|
+| 03 | `./scripts/offhost-backup.sh` then `REMOTE_DIR=<aged dir> ./scripts/offhost-backup.sh` | `pg_restore lists N entries`, then exit 1 naming the age |
+| 10 | browser, signed in, `/dashboard` | a line matching `\d+ whiteboi` and a link to `/kpi` |
+| 14 | `curl -s https://…/log/denial` is NOT enough (200 either way) — browser, `/log/denial` | `This will record a denial.` |
+| 15 | browser, signed in, `/dashboard` | `of 5 left · resets in` — the word **resets**
+
 ## Where the items came from
 
 `docs/100_IDEAS.md` ranks 100 ideas by value-for-work. Filed into the public Concord project

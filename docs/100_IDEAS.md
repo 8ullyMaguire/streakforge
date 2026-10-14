@@ -15,6 +15,13 @@ SQL. What the 16 items turned into is recorded in SPEC §3.6, §7.2, §7.4, §7.
 §15, §16 and §17; the honest summary is that four of them (01, 11, 13, 16) changed
 what the site measures, and the other twelve changed what it tells you.
 
+**A third pass on 2026-10-14 (late) read the ideas' own sentences for clauses never built at
+all** and found four: 03's dump did not survive the disk dying (it now copies off-host), 10's
+line was only on the landing page and not the dashboard the item names, 14's `/log/habit` path
+form did not exist, and 15's reset clock never rendered (one field was answering two different
+questions). All four are closed. Three of the four had shipped "one surface away" from the
+item's own words.
+
 **A second pass on 2026-10-14 re-read all 16 against what actually landed** and found
 five places where the implementation was weaker than the idea: 03's rehearsal was not on
 a timer, 06's backoff was flat and unlogged, 09's test compared signatures instead of
@@ -33,19 +40,19 @@ ranking working, not the ideas being weak.
 | ~~01~~ | ~~9.0~~ | ~~Stop publishing log notes to the anonymous feed~~ **SHIPPED** | 9 | 1 | S | Privacy |
 | 01 | **9.0** | Stop publishing log notes to the anonymous feed | 9 | 1 | S | Privacy |
 | 02 | **6.0** | Set Secure and the __Host- prefix on the session cookie **— SHIPPED** | 6 | 1 | S | Privacy |
-| 03 | **5.0** | Back up the production database **— SHIPPED** (nightly, and rehearsed monthly on a timer) | 10 | 2 | S | Ops |
+| 03 | **5.0** | Back up the production database **— SHIPPED** (nightly, rehearsed monthly on a timer, and the newest dump copied to a second machine nightly) | 10 | 2 | S | Ops |
 | 04 | **5.0** | robots.txt and a sitemap.xml **— SHIPPED** | 5 | 1 | S | SEO |
 | 05 | **3.5** | CI: run the gate on every push **— SHIPPED** (fmt advisory, clippy errors-only) | 7 | 2 | S | Ops |
 | 06 | **3.5** | Throttle failed logins per account and per IP **— SHIPPED** (doubling past 8/day, 2h cap, every refusal logged) | 7 | 2 | S | Auth |
 | 07 | **3.0** | Add Open Graph and Twitter meta tags **— SHIPPED** (static, honestly so) | 6 | 2 | S | Growth |
 | 08 | **3.0** | An 18+ interstitial and a clear terms line **— SHIPPED** (an acknowledgement, and it says so) | 6 | 2 | S | Compliance |
 | 09 | **3.0** | Pin activity_feed's column list with a test **— SHIPPED** (five signatures pinned, plus ten router-level tests that decode the JSON) | 6 | 2 | S | Ops |
-| 10 | **3.0** | Who denied today: a live same-day counter **— SHIPPED** (`/api/today`) | 6 | 2 | S | Social |
+| 10 | **3.0** | Who denied today: a live same-day counter **— SHIPPED** (`/api/today`, on the landing page AND on the dashboard, which is where the item put it) | 6 | 2 | S | Social |
 | 11 | **2.67** | Score by day, not by row, now that a day can hold five logs **— SHIPPED** | 8 | 3 | M | Scoring |
 | 12 | **2.5** | A glossary for the language **— SHIPPED** (17 terms, each naming its enforcement, linked from the empty states) | 5 | 2 | S | Content |
 | 13 | **2.5** | Anti-sybil: account age before a board appearance **— SHIPPED** (24h) | 5 | 2 | S | Scoring |
-| 14 | **2.5** | Log from a deep link or one-key URL **— SHIPPED** (`/log?kind=`) | 5 | 2 | S | Streaks |
-| 15 | **2.5** | Show the day's remaining budget and the clock together **— SHIPPED** | 5 | 2 | S | Streaks |
+| 14 | **2.5** | Log from a deep link or one-key URL **— SHIPPED** (`/log?kind=` and the path form `/log/habit`, `/log/denial`, `/log/affirmation` that the item names) | 5 | 2 | S | Streaks |
+| 15 | **2.5** | Show the day's remaining budget and the clock together **— SHIPPED** (`4 of 5 left · resets in 5h 3m`, from a field that is the day's clock and not the log lock's) | 5 | 2 | S | Streaks |
 | 16 | **2.5** | Warn before the 30-day decay erases a score **— SHIPPED** (`days_until_decay`) | 5 | 2 | S | Scoring |
 | 17 | **2.33** | A consistency board: percentage of days logged | 7 | 3 | M | Scoring |
 | 18 | **2.33** | A running lock-streak board | 7 | 3 | M | Lock |

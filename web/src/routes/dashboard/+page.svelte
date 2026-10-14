@@ -6,6 +6,8 @@
 	import StreakCalendar from '$lib/components/StreakCalendar.svelte';
 	import { budgetLabel } from '$lib/countdown';
 	import { decayNotice, decayStyle } from '$lib/decay';
+	import { todayLine } from '$lib/today';
+	import type { TodayCounts } from '$lib/today';
 
 	let stats = $state<Stats | null>(null);
 	let error = $state<string | null>(null);
@@ -21,6 +23,12 @@
 	// Ticks slowly so the budget line's "resets in 4h 12m" stays honest without
 	// a reload. 30s, not 1s: the label is in minutes, and a per-second interval
 	// on a page that also runs a per-second countdown is work nobody can see.
+	// Item 10: what the COMMUNITY has done today, which is a different number from
+	// the user's own. Fetched separately and tolerated separately -- the landing
+	// page learned that one failing endpoint must not blank the page, and this
+	// line is decoration next to the numbers above it.
+	let today = $state<TodayCounts | null>(null);
+
 	let now = $state(Date.now());
 	$effect(() => {
 		const t = setInterval(() => (now = Date.now()), 30_000);
@@ -45,6 +53,13 @@
 	}
 
 	onMount(async () => {
+		// Independent of the stats call: this is a public read, and a failure
+		// leaves the line absent rather than taking the dashboard with it.
+		fetch('/api/today')
+			.then((r) => (r.ok ? r.json() : null))
+			.then((t) => (today = t))
+			.catch(() => (today = null));
+
 		try {
 			stats = await api.stats();
 			receivedAt = Date.now();
@@ -88,10 +103,27 @@
 		<h1 style="font-size:24px;letter-spacing:0.04em;margin:0 0 4px;">
 			KNOW YOUR PLACE
 		</h1>
-		<p style="color:var(--text-dim);font-size:14px;margin:0 0 20px;">
+		<p style="color:var(--text-dim);font-size:14px;margin:0 0 10px;">
 			Loads wasted are a budget of {stats.daily_limit} a day (UTC) — miss every one and
 			the streak resets. A denial and a waste are mutually exclusive.
 		</p>
+
+		<!--
+			Item 10: the community's day, not the user's. This is the only number on
+			this page that is about other people, and it is deliberately a live read
+			of the same count the KPI page publishes rather than a stored copy.
+			The sentence is a pure function in $lib/today so today.test.ts can assert
+			the empty state as well as the busy one.
+		-->
+		{#if today}
+			<div style="font-size:13px;margin:0 0 20px;">
+				<a href="/kpi" style="color:var(--gold);text-decoration:none;">
+					{todayLine(today)}
+				</a>
+			</div>
+		{:else}
+			<div style="height:19px;margin:0 0 20px;"></div>
+		{/if}
 
 		<!-- Whiteboi Devotion Index -->
 		<div class="card" style="margin-bottom:20px;">
@@ -175,7 +207,7 @@
 			<div
 				style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;letter-spacing:0.04em;color:var(--text-dim);margin-bottom:12px;"
 			>
-				<span>{budgetLabel(stats.remaining_today, stats.daily_limit, stats.next_allowed_in_secs, now - receivedAt)}</span>
+				<span>{budgetLabel(stats.remaining_today, stats.daily_limit, stats.secs_until_reset, now - receivedAt)}</span>
 				{#if stats.blocked_by_exclusivity}
 					<span style="color:var(--gold);">the other kind already ran today</span>
 				{/if}

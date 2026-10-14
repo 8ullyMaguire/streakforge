@@ -1,5 +1,35 @@
 # StreakForge — Development Status
 
+## 2026-10-14 (late) — the third reading: four clauses that were never shipped
+
+The plan's scope is sixteen items and all sixteen are marked shipped. This pass read the
+ideas' own sentences again — not for weaker implementations this time, but for **clauses
+that were never built at all** — and found four. All four are closed and verified live.
+
+| # | the clause | was | now |
+|---|---|---|---|
+| 03 | the dump must survive what the item names ("turns *the disk died* from the end of the site into an hour") | dump and rehearsal both on the disk that dies | `scripts/offhost-backup.sh` copies the newest dump to the other host nightly; five checks, a pruning window, and a control that proves each one fires |
+| 10 | "a line **on the dashboard**" | the endpoint existed and the landing page showed it; the dashboard, where a logging user looks, did not | the dashboard shows `2 whitebois denied today · 3 wasted`, linked to `/kpi` |
+| 14 | "a confirm page at **/log/habit**" | only `/log?kind=habit`; the path form hit the app's not-found page | `/log/habit`, `/log/denial`, `/log/affirmation` are real routes, each rendering the right kind |
+| 15 | "**resets in 4h12m**" | the label read `4 of 5 left today` for most of every day | `4 of 5 left · resets in 1h 54m` |
+
+**15 was a semantic collision, not a missing feature.** `next_allowed_in_secs` was zeroed
+whenever `can_log` was true — the normal state — so the day's clock was reported as 0 and the
+label fell back to "left today". One field, two questions ("may I log now?", "when does the
+allowance refill?"). There are two fields now, and the route test asserts the distinction:
+`can_log == true` while `next_allowed_in_secs == 0` while `secs_until_reset` is 1..86400.
+
+**Not a bug anyone would have reported.** The endpoint worked, the numbers were right, and
+the sentence never appeared. Three of the four are the same shape as the five found in the
+audit pass — the deliverable shipped one surface away from the one the item names — which is
+now the single most productive thing to look for in this codebase.
+
+**Also**: three mutations, each reddening exactly the tests that assert the behaviour (the
+mismatch reporter, the empty state, the budget clock); one observation I could not explain
+(an integration run reporting 47 failures in 0.01s, unreproduced on two later full runs, the
+error text lost to my own grep); and the CI story is unchanged — push triggers still create no
+runs, so this commit is dispatched by hand (SPEC §16.3).
+
 ## 2026-10-14 (evening) — the tier 1+2 audit: five gaps between the ideas and the code
 
 The first tier 1+2 pass shipped 16 items. This pass re-read each of the 16 ideas against

@@ -341,7 +341,9 @@ Only relevant offline; fonts are cosmetic (fallback stacks in CSS).
 Everything the site knows — every log, every streak and every private note — lives in
 ONE Postgres database on ONE machine. Until 2026-10-14 there was no dump at all, so a
 bad migration, a mistaken `DELETE` or a failing disk was a total loss. There are now
-nightly dumps, and a rehearsal that proves they restore.
+nightly dumps, a rehearsal that proves they restore, and a nightly copy of the newest
+dump onto a DIFFERENT machine — because a dump on the disk that dies is not a backup of
+the disk that dies.
 
 ### 6.1 Nightly dumps
 
@@ -375,7 +377,42 @@ Run it by hand any time — it is idempotent for a given day:
 ssh thinkcentre '/opt/streakforge/backup-db.sh'
 ```
 
-### 6.2 Restore, and the rehearsal
+#### 6.1b The off-host copy (`scripts/offhost-backup.sh`)
+
+The nightly dump and the rehearsal both live on thinkcentre, so on their own they turn "the
+disk died" into the end of the site — which is the catastrophe idea 03 names. This script
+runs on the **other** host (cachyos-B450, this machine) and pulls the newest dump across:
+
+```
+15 4 * * * cd ~/code-local/rust/streakforge && ./scripts/offhost-backup.sh >> ~/backups/streakforge-offhost/cron.log 2>&1
+```
+
+It is a **pull**, not a push, so the host holding the database needs no credential on the
+machine that stores the copy, and the machine that keeps the copy decides what it accepts.
+
+What it checks before keeping anything, and why each check exists:
+
+| check | why |
+|---|---|
+| the remote dump exists at all | a host that is up with no dump is the failure this notices |
+| its AGE is under `MAX_AGE_HOURS` (48) | a stale dump means the BACKUP is broken; the message says so, rather than blaming the copy |
+| its SIZE is at least `MIN_BYTES` (10000) | a truncated or empty dump is worse than none, because it looks like a backup |
+| the copy's length equals the remote's | a partially transferred file must never be mistaken for a complete one |
+| `pg_restore --list` opens it | length is not readability — this is the one check that proves the file is an archive |
+| the previous run's file is already here | re-running is free, and the cron can be run by hand without consequence |
+
+It keeps the last `KEEP` (14) dumps and prunes the rest. `DRY_RUN=1` says what it would do.
+
+Every one of those has a control that proves it fires — make a dump old, make one small,
+remove them all — and the three messages name which check failed.
+
+**What this is NOT.** It is off-HOST, not off-SITE: a second machine on the same LAN does
+not survive the building. Adding a real off-site target is one line at the end of the
+script (`rclone copy`, `aws s3 cp`, or an rsync to anywhere that is not in this house);
+until that exists, the honest description of this project's backup posture is "survives
+one disk, not one house".
+
+## 6.2 Restore, and the rehearsal
 
 ```bash
 ssh thinkcentre '/opt/streakforge/restore-db.sh'                 # newest dump
