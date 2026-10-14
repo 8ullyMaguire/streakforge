@@ -1,3 +1,53 @@
+## My sites
+
+Everything on this list is mine. One line each, and the honest state of it — two of the sixteen are not finished yet, and they say so below rather than pretending.
+
+- **StreakForge** — https://streakforge.polarisocial.xyz — this site: lock, deny, drill, waste
+  when permitted. The board remembers.
+- **WhiteBois** — https://whitebois.polarisocial.xyz — a community for the obsessive.
+- **BlackRep** — https://blackrep.polarisocial.xyz — verified encounters, and the reputation
+  that comes from them.
+- **GRAVITY** — https://gravity.polarisocial.xyz — the federated social instance.
+- **Concord** — https://concord.polarisocial.xyz — the consensus forge. Every other site here
+  takes work through it; see below.
+- **Lorehaven** — https://lorehaven.polarisocial.xyz — a welcoming home for fanfiction: read,
+  write, import your library, keep it offline.
+- **FicNexus** — https://ficnexus.polarisocial.xyz — fanfiction as EPUB, HTML, MOBI and PDF,
+  with recommendations for what to read next.
+- **Kindred** — https://kindred.polarisocial.xyz — recommendations out of an AO3 corpus kept
+  locally.
+- **StashDB** — https://stashdb.polarisocial.xyz — a Stash-Box: the metadata box behind the
+  library.
+- **PieFed** — https://piefed.polarisocial.xyz — the federated forum.
+- **BNWO feed** — https://bnwo-feed.polarisocial.xyz — the custom feeds.
+- **news08** — https://news.polarisocial.xyz — the news desk, and the broadcasts that go with
+  it.
+- **the radio** — https://icecast.polarisocial.xyz — the stream and its player.
+- **the forge** — https://git.polarisocial.xyz — repos, issues, mirrors. My own git, not
+  somebody else's.
+- **leftist** — https://leftist.polarisocial.xyz — not up yet. Nothing answers on that
+  hostname, so the entry is the intention, not a working link.
+- **castopod** — https://castopod.polarisocial.xyz — podcast hosting, also not up yet. Right
+  now that hostname serves the WhiteBois app, which is a routing mistake rather than a site.
+
+## Want anything changed? Ask the forge.
+
+None of this is finished, and the list of what to do next is not mine to keep to myself. The way to make something here different is Concord — the consensus forge — and this site's project is:
+
+**[This site's project is here](https://concord.polarisocial.xyz/projects/streakforge)** —
+https://concord.polarisocial.xyz/projects/streakforge
+
+- **File a complaint** when something is broken, wrong, or missing. A complaint is the
+  currency: a feature cannot even be filed without one, so the problem comes first and the
+  solution comes second. That is deliberate.
+- **File a feature** describing what you want built instead — in your words. Every idea on my
+  own ranked list went in the same way.
+- **Vote in the arena.** When there is more than one way out of the same problem, the
+  proposals go head to head and the votes decide which one gets built. Your weight there comes
+  from your record in the forge, not from who you are.
+
+You do not need an account here to read any of it, and you do not need to be a member to file something. Several of the sites above keep their own project in the same forge — WhiteBois, FicNexus, Lorehaven and GRAVITY among them — so the same door works wherever you are standing when you hit something you want fixed.
+
 ## My links
 
 - All my links: https://allmylinks.com/visible-change-435

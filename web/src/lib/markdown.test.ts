@@ -74,6 +74,17 @@ describe('renderMarkdown', () => {
 			expect(out).toContain('tags=%28a+%7e+b%29#frag');
 		});
 
+		it('escapes an explicit link\'s query string EXACTLY once', () => {
+			// `[text](url)` used to escape the URL a second time, so
+			// `?page=post&s=list` became `?page=post&amp;amp;s=list` -- a
+			// published link with a parameter named `amp;s`, which is broken while
+			// looking right. The bare-URL pass already emitted as-is; this asserts
+			// the two passes agree.
+			const out = renderMarkdown('[favs](https://rule34.xxx/index.php?page=post&s=list&tags=a)');
+			expect(out).toContain('href="https://rule34.xxx/index.php?page=post&amp;s=list&amp;tags=a"');
+			expect(out).not.toContain('amp;amp;');
+		});
+
 		it('refuses to linkify a javascript: URL', () => {
 			const out = renderMarkdown('javascript:alert(1)');
 			expect(out).not.toContain('<a ');

@@ -8,6 +8,9 @@ node_modules/
 web/node_modules/
 web/build/
 web/.svelte-kit/
+# SvelteKit writes this at the package root it is invoked from, so running any
+# tool from the repo root instead of web/ drops a generated copy here.
+/.svelte-kit/
 npm-debug.log*
 *.egg-info/
 # web/package-lock.json is deliberately NOT ignored: it is tracked, and an

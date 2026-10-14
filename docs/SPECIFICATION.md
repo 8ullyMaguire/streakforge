@@ -742,6 +742,17 @@ public surface (leaderboards, feed, profile pages) but are effectively read-only
   `-/*/+` and numbered lists (→ `<ul>`), fenced code blocks, inline `**bold**`, `*italic*`,
   `` `code` ``, `[text](url)` links (http/https/relative only; target=_blank).
 - No raw HTML passthrough. Used by the manifesto page via `{@html rendered}`.
+- **Wrapped lines continue the open list item** (lazy continuation). Prose is wrapped at ~90
+  columns, so a list entry longer than the wrap point arrives as a bare line; without this the
+  list closed and each continuation rendered as its own paragraph after the bullet.
+- **Paragraphs are one line each, and consecutive text lines stay separate paragraphs.** This
+  is deliberately NOT lazy continuation: the doctrine docs use a line break after a bold label
+  or a link to end a block, and joining lines changed two published pages when tried.
+- Both URL passes emit the URL **as already escaped** (once). Escaping a second time produced
+  `href="…?page=post&amp;amp;s=list"` — a link whose parameter is literally `amp;s`, broken
+  while looking correct. Pinned by tests in `markdown.test.ts` and `socials-doc.test.ts`.
+- A bare URL wrapped in `**bold**` does **not** linkify (the marker sits between the line start
+  and the URL). Write `[text](url)` for a bold link.
 
 ---
 
