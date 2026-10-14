@@ -234,9 +234,9 @@ From any machine on the LAN:
 # Service + port
 ssh thinkcentre 'systemctl is-active streakforge; ss -tln | grep 8001'
 
-# HTTP health (local) — /api/health is the one that can FAIL: it round-trips a
-# query and answers 503 when the database cannot. Do not use /health (it does
-# not exist) or / (the SPA shell answers 200 whatever is behind it).
+# HTTP health (local) — /health and /api/health are the same check: they
+# round-trip a query and answer 503 when the database cannot. Do not use / (the
+# SPA shell answers 200 whatever is behind it).
 curl -s http://127.0.0.1:8001/api/health
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8001/
 curl -s http://127.0.0.1:8001/api/total

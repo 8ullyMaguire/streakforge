@@ -124,6 +124,11 @@ pub async fn build_router(cfg: &Config, pool: PgPool) -> Result<Router, sqlx::Er
     });
 
     Ok(Router::new()
+        // The same handler at the root path as well, because `/health` is what a
+        // person and most monitors try first -- and until this existed, that path
+        // returned 200 with the SPA shell, i.e. it reported a healthy site whatever
+        // the database was doing. `/api/health` remains the canonical one.
+        .route("/health", get(crate::api::health))
         .nest("/api", api_router)
         .nest_service(
             "/_app",

@@ -122,11 +122,20 @@ async fn health_reports_the_database(pool: PgPool) {
     // A health check that cannot fail is not a check: before this route existed,
     // GET /health returned 200 on a broken database because the SPA fallback
     // served index.html.
-    let res = get(&app(pool).await, "/api/health", None).await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = json_of(res).await;
-    assert_eq!(body["status"], "ok");
-    assert_eq!(body["database"], "ok");
+    let app = app(pool).await;
+    // Both paths, because `/health` is what a monitor guesses first and it used to
+    // answer 200 with the SPA shell.
+    for path in ["/api/health", "/health"] {
+        let res = get(&app, path, None).await;
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "{path} must be a real health check"
+        );
+        let body = json_of(res).await;
+        assert_eq!(body["status"], "ok", "{path}");
+        assert_eq!(body["database"], "ok", "{path}");
+    }
 }
 
 #[sqlx::test(migrations = "./migrations")]

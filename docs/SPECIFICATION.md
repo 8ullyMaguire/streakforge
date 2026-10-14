@@ -545,11 +545,12 @@ Base URL: `/api` (proxied by the SPA in dev; same origin in production).
 | GET | `/auth/me` | ✓ | — | `SessionUser` or 401 |
 | POST | `/auth/logout` | ✓ | — | 303 redirect to `/` |
 
-`GET /health` is deliberately under `/api`, not at the root: before it existed, `GET
-/health` returned 200 on a broken database, because nothing matched the path and the SPA
-fallback served `index.html`. A status code that describes the app shell instead of the
-system is worse than no health check — a script watching it would report a dead site as
-healthy. This one round-trips a query and fails as 503.
+`GET /api/health` and `GET /health` are the same handler, and that is deliberate: before
+either existed, `GET /health` returned 200 on a broken database, because nothing matched
+the path and the SPA fallback served `index.html`. A status code that describes the app
+shell instead of the system is worse than no health check — a script watching it would
+report a dead site as healthy. This one round-trips a query and fails as 503. The root
+path is served too so the trap does not survive at the address people actually try.
 
 `AuthForm` (JSON body):
 ```json
@@ -1383,8 +1384,11 @@ All of the following were actually exercised (not assumed):
 
 **2026-10-14 (tier 1+2 audit) — production, `streakforge.polarisocial.xyz`**
 
-- **`/api/health`**: 200 `{"status":"ok","database":"ok"}` — and the endpoint it
-  replaced (`/health`) is gone, so nothing can answer 200 with `index.html` any more.
+- **Health**: `/api/health` → 200 `{"status":"ok","database":"ok"}`. **And the first
+  version of this fix was incomplete**: `/health` (the path a monitor guesses first) still
+  returned 200 with `index.html`, because the SPA fallback answers every unmatched path. It
+  now serves the same handler, so neither path can report a healthy site with a dead
+  database. This is the same defect as the one being fixed, one layer out.
 - **The escalation, measured against the live database** (a throwaway account, since
   deleted): five wrong guesses → `401` each; the sixth → `429 Retry-After: 899`. Recording
   failures into the day then quoting the wait again gave **1800 → 3600 → 7200 → 7200** at
