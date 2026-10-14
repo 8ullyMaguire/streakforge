@@ -23,6 +23,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual trigger, added 2026-10-14 after push-triggered runs stopped being
+  # created (the workflow's only run is 3b8096c; later pushes made no run while
+  # Actions were enabled and the commits reached the remote). A gate you can
+  # start by hand is not a gate that fires on its own, but it is the difference
+  # between a suite with a URL and a suite with a promise.
+  workflow_dispatch:
 
 # A push that supersedes an in-flight run makes the old one pointless.
 concurrency:
