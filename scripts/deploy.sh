@@ -118,14 +118,48 @@ ssh "$HOST" "sudo systemctl daemon-reload && sudo systemctl enable streakforge &
 # The deploy used to print "Done" after a successful restart, which reported
 # success while every API route 500'd. Assert the endpoints the frontend
 # actually calls, and fail loudly if any of them do.
+#
+# And wait for the service to come UP first. `systemctl restart` returns as soon
+# as the process is started (Type=simple), which is well before the listener
+# exists, so the loop below could run against a socket nobody was bound to and
+# report FAIL on a deploy that was perfectly fine. That is what happened on
+# 2026-10-14: the script exited 1 with eight endpoints answering 200 a few
+# seconds later, and the only reason it was caught is that the operator did not
+# take the gate's word for it. A gate that cries wolf is worse than no gate.
+echo "==> 6b/6 Waiting for $HOST to accept connections"
+READY=0
+for i in $(seq 1 30); do
+  code=$(curl -s -o /dev/null -w '%{http_code}' "https://streakforge.polarisocial.xyz/api/total" || true)
+  if [ "$code" = "200" ]; then
+    echo "    serving (after ${i}s)"
+    READY=1
+    break
+  fi
+  sleep 1
+done
+if [ "$READY" -ne 1 ]; then
+  echo "FATAL: the service did not answer within 30s of the restart." >&2
+  ssh "$HOST" "sudo journalctl -u streakforge -n 30 --no-pager" >&2
+  exit 1
+fi
+
 echo "==> Health check"
 HEALTH_FAIL=0
 # NOTE: /leaderboard/{period} has no bare form, and /feed takes a ?cursor
 # query — so "/api/leaderboard" and "/api/feed/0" are 404s by design, not
 # faults. These paths mirror what web/src/lib/api.ts actually requests.
+#
+# Each path gets three tries. A single retryable blip (a Cloudflare hiccup, one
+# cold connection) must not read as "the deploy did NOT land cleanly"; only a
+# path that fails three times does.
 for path in "/" "/api/total" "/api/leaderboard/monthly" "/api/leaderboard/alltime" \
             "/api/user-of-the-day" "/api/feed" "/api/doctrine" "/api/kpi"; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' "https://streakforge.polarisocial.xyz$path")
+  code=000
+  for _ in 1 2 3; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' "https://streakforge.polarisocial.xyz$path" || true)
+    [ "$code" = "200" ] && break
+    sleep 1
+  done
   if [ "$code" = "200" ]; then
     echo "  ok   $path ($code)"
   else
