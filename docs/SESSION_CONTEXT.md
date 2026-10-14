@@ -2,20 +2,21 @@
 
 > Read this first if you're a fresh agent (or a returning one after a cleared
 > session). It summarizes everything, points to the deep docs, and lists the
-> immediate next actions. Last updated: 2026-08-10.
+> immediate next actions. Last updated: **2026-10-14**.
 
 ---
 
 ## TL;DR
 
-- **What**: StreakForge — habit & streak tracker with community leaderboards,
-  wlw.grok.me-inspired dark theme (counter, marquee, red/gold, mono digits).
+- **What**: StreakForge — a whiteboi denial & accountability tracker with community
+  leaderboards, wlw.grok.me-inspired dark theme (counter, marquee, red/gold, mono digits).
 - **Stack**: Rust (axum) + SvelteKit (Svelte 5, adapter-static SPA) + PostgreSQL.
-- **Where**: local repo `~/code/projects/streakforge`; production on thinkcentre
-  (192.168.1.13) port 8001 (systemd `streakforge.service`); private mirror on
-  opencommit.eu/MagicZhang/streakforge.
-- **Status**: fully working + verified. 13 integration + 8 lib tests, 33 frontend tests,
-  deployed, pushed. Everything committed (`main` at `ea5a5c6`).
+- **Where**: local repo `/home/alvaro/code-local/rust/streakforge`; production on
+  thinkcentre (192.168.1.13) port 8001 (systemd `streakforge.service`, binary in
+  `/opt/streakforge`); public at https://streakforge.polarisocial.xyz; GitHub remote
+  `github` = github.com/8ullyMaguire/streakforge.
+- **Status**: fully working + verified. **68 backend tests** (20 unit + 48
+  integration), **93 frontend tests**, migrations `0001`–`0011`, deployed and green.
 
 ---
 
@@ -23,18 +24,22 @@
 
 | Fact | Value |
 |------|-------|
-| Repo | `/home/alvaro/code/projects/streakforge` |
-| Backend dev port | 127.0.0.1:8787 |
-| Prod port | 127.0.0.1:8001 (thinkcentre) — public: https://streakforge.polarisocial.xyz |
-| DB dev | local `streakforge` / `streakforge_dev` |
-| DB prod | thinkcentre `streakforge` / random (in Hermes profile `.env` as `STREAKFORGE_DB_PASSWORD`) |
-| Frontend build | `web/build` (adapter-static), served by Rust |
-| Rate limits | 1/hr + 5/day per kind (habit | affirmation) |
-| Git remote `github` | https://opencommit.eu/MagicZhang/streakforge.git (private) |
-| Docs | `docs/SPECIFICATION.md` (1058 lines), `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` |
+| Repo | `/home/alvaro/code-local/rust/streakforge` |
+| Backend dev port | 127.0.0.1:8787 (`scripts/dev.sh`) |
+| Prod port | 127.0.0.1:8001 on thinkcentre — public https://streakforge.polarisocial.xyz |
+| DB dev (this host) | a local cluster (e.g. `streakforge_dev` on 127.0.0.1:5499) |
+| DB prod | thinkcentre `streakforge`, role `streakforge` (has CREATEDB). Password lives only in `/opt/streakforge/.env` |
+| Migrations | `0001`–`0011`, applied automatically at startup |
+| Frontend build | `web/build` (adapter-static), served by Rust — **rebuild after every frontend change** |
+| Rate limits | wastes 5/UTC day (`WLW_DAILY_LIMIT`), denials 1/day, reps 5/day; waste and denial are mutually exclusive per day |
+| Login throttle | 5 failures/username or 30/address per 15 min → 429 + `Retry-After` |
+| Score | `(days wasted + days denied + drill bonus) × multiplier`; counts DAYS; 24h account-age floor on boards |
+| Session | 30 days (`SESSION_TTL_DAYS`); prod cookie is `__Host-streakforge_session` (Secure) |
+| Backups | nightly 03:30 → `~/backups/streakforge` on thinkcentre; restore rehearsal: `/opt/streakforge/restore-db.sh` |
+| CI | `.github/workflows/ci.yml` — postgres service + cargo test; npm ci + check + test + build |
+| Docs | `docs/SPECIFICATION.md`, `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, `docs/100_IDEAS.md`, `docs/plans/` |
 | Status file | `STATUS.md` (keep updated) |
-| Prod secrets | `~/.hermes/profiles/coding/.env` on this machine: `STREAKFORGE_SESSION_SECRET`, `STREAKFORGE_DB_PASSWORD` |
-| Auth endpoints | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/nonce` (bot-dissuaded: honeypot + form timing + sha256 challenge) |
+| Prod secrets | `~/.hermes/profiles/coding/.env` (`STREAKFORGE_SESSION_SECRET`, `STREAKFORGE_DB_PASSWORD`); the live `.env` on the host |
 
 ---
 
@@ -45,68 +50,90 @@
    landing/dashboard/leaderboard/feed/profile/settings.
 2. **Scripts** (`706dce1`) — `scripts/dev.sh`, `scripts/seed.sql`.
 3. **Doctrine** (`71b52a2` + renames) — `/doctrine` page + `/api/doctrine*` serving
-   markdown docs from `manifestos/`; custom markdown renderer (XSS-safe).
+   markdown docs from `manifestos/` (11 docs); custom markdown renderer (XSS-safe).
 4. **Affirmation Drill** (`8e01e64`) — `/drill` page with wlw counter + affirmation
    deck; `kind` column on habit_logs; per-kind rate limits; drill reps excluded from
    community surfaces.
 5. **Deploy** (`1e99bce`, `c226861`) — `scripts/deploy.sh`; systemd service on
    thinkcentre port 8001 (mirrors fichub on 8000; nginx inactive there).
-6. **Local auth** (`9aa2817`, `7765323`, `917c1cd`, `33c296f`, `7e60488`,
-   `d667aea`) — X OAuth + dev-login **replaced** by local username/password
-   (Argon2id) with bot-dissuasion (honeypot + form timing + sha256 JS challenge);
-   `social_url` on profiles; migration `0004_local_auth.sql`; prod secrets moved to
-   the Hermes profile `.env`; unknown `/api/*` → 404.
-7. **Docs** — this set + expanded README.
+6. **Local auth** (`9aa2817`…`d667aea`) — X OAuth + dev-login replaced by local
+   username/password (Argon2id) with bot-dissuasion; `social_url`; migration `0004`;
+   secrets moved to the Hermes profile `.env`; unknown `/api/*` → 404.
+7. **Devotion Index** (`0008`–`0010`) — the score replaced log counts:
+   `(WLW + WLD + game bonus) × streak multiplier`, a 30-day decay rule, a lifetime
+   record that does not decay, and the `/kpi` page.
+8. **Sessions, budget & the ranked 100** (2026-10-14) — the signing key derived from
+   `SESSION_SECRET` (restart-logout fixed), `WLW_DAILY_LIMIT=5`, `docs/100_IDEAS.md`
+   filed to the public Concord project, all 16 ideas scoring ≥ 2.5 shipped
+   (`91fc795`): notes private, day-based scoring, board age floor, decay warning,
+   `__Host-` cookie, nightly backups + rehearsal, CI, login throttle, og/twitter cards,
+   18+ notice + `/terms`, `/glossary`, `/api/today`, `/log?kind=` deep links, budget +
+   reset clock. Plan: `docs/plans/2026-10-14-tier-1-and-tier-2.md`.
 
 ---
 
 ## Where things live (key files)
 
-- Backend API: `backend/src/api.rs` (all handlers, DTOs, rate limits).
-- Auth: `backend/src/auth.rs` (register/login/nonce, Argon2id, bot-dissuasion).
-- Router/startup: `backend/src/main.rs`.
-- Schema/functions: `backend/migrations/0001_init.sql`, `0002_leaderboards.sql`,
-  `0003_affirmations.sql`, `0004_local_auth.sql` (password_hash + social_url).
-- Frontend theme: `web/src/app.css`.
-- API client: `web/src/lib/api.ts` (types in `types.ts`).
-- Affirmation deck: `web/src/lib/affirmations.ts`.
-- Markdown renderer: `web/src/lib/markdown.ts`.
-- Doctrine content: `manifestos/*.md` (10 docs).
-- Deploy: `scripts/deploy.sh`, prod .env on thinkcentre.
+- Backend API: `backend/src/api.rs` (handlers, DTOs, budgets, the `/api/today` route).
+- Auth: `backend/src/auth.rs` (register/login/nonce, Argon2id, bot-dissuasion, the
+  login throttle, cookie naming) + `auth_tests.rs`.
+- Router/startup: `backend/src/main.rs`. Errors: `error.rs` (status + optional
+  `Retry-After`).
+- Schema/functions: `backend/migrations/0001`…`0011` (0011 = privacy, day scoring,
+  sybil floor, decay countdown, `today_counts()`, `login_attempts`).
+- Frontend theme: `web/src/app.css`. API client: `web/src/lib/api.ts` (types in
+  `types.ts`).
+- Pure logic modules with their own tests: `countdown.ts`, `deeplink.ts`, `agegate.ts`,
+  `glossary.ts`, `affirmations.ts`, `markdown.ts`, `validation.ts`, `challenge.ts`.
+- Doctrine content: `manifestos/*.md` (11 docs).
+- Ops: `scripts/deploy.sh`, `scripts/backup-db.sh`, `scripts/restore-db.sh`,
+  `.github/workflows/ci.yml`, prod `.env` on thinkcentre.
 
 ---
 
 ## Verified state (do not re-verify everything)
 
-- `cargo test --test integration` → 13 passed.
-- `cargo test --lib` (auth unit tests) → 8 passed.
-- `npx vitest run` → 33 passed. `npm run check` → 0 errors.
-- Prod: root/drill/api 200, unauth 401, register/login work (bot-dissuaded), port
-  8001, random `SESSION_SECRET` + DB password (in the Hermes profile `.env`).
-- Repo pushed private: opencommit.eu/MagicZhang/streakforge (id 241, main @ ea5a5c6).
+- `cargo test` → **20 lib + 48 integration passed**; `vitest run` → **93 passed**;
+  `svelte-check` → 0 errors / 0 warnings; `vite build` → green.
+- Prod deploy → 15/15 health checks 200 (including `/api/today`, `/robots.txt`,
+  `/sitemap.xml`, `/og.png`, `/glossary`, `/terms`, `/log`).
+- Live-verified 2026-10-14: `__Host-` cookie + `/api/auth/me`; `/api/feed` returns no
+  `note` key while 512 notes remain in Postgres; `/api/today` matched a direct SQL
+  count; five bad logins → 429 (`Retry-After: 899`) with the correct password also
+  refused and another username still able to sign in; the restore rehearsal matched
+  production (`profiles 67`, `habit_logs 512`, `migrations 11`).
+- Browser-verified: the 18+ overlay, the note-free landing page, all 17 glossary
+  terms, `/terms`, `/log?kind=denial` and the unknown-kind fallback.
 
 ---
 
 ## Immediate next actions (if continuing)
 
-1. ~~**Cloudflare route** — DONE: https://streakforge.polarisocial.xyz routes to
-   `http://192.168.1.13:8001`~~ (verify it still works when you resume).
-2. **(Optional) session-key fix** — SPEC §25: `Key::from(cfg.session_secret.as_bytes())`
-   so sessions survive restarts.
-3. **(Optional) HTTPS** — `SECURE_COOKIES=1` once behind the tunnel.
-
-Sample account (live, created 2026-08-10): `sample_user` / `SamplePass123!` at
-https://streakforge.polarisocial.xyz — usable for manual QA; delete when done.
+1. **Tier 3+ of `docs/100_IDEAS.md`** — everything scoring under 2.5 was never
+   started. Ranks 17–20 (consistency board, lock-streak board, public ledger,
+   verifiable lock seal) are the next by score.
+2. **Off-host backups.** The dumps are on the same machine as the database, so a lost
+   host is still a total loss (SPEC §27).
+3. **Schedule the restore rehearsal** so "we have backups" becomes "the last backup
+   restored".
+4. **Self-service export/delete** — `/terms` promises both on request, and today that
+   is manual.
+5. The `racism_penalty` score component has no data source and is always 0: either
+   wire it or remove it from the formula.
 
 ---
 
 ## Conventions to respect
 
 - Conventional Commits, small units.
-- **Run only targeted tests** (`cargo test --test integration`, `npx vitest run <file>`)
-  — never full suites (cargo ~10min).
-- Keep STATUS.md + docs updated after features.
-- Mirror push to `github` remote after merges.
+- **Spec + plan before code** for anything non-trivial; keep `docs/` and `STATUS.md`
+  in sync with the code (several doc sections were stale for months — if they
+  disagree, the code wins and the doc is a bug).
+- A gate has to be able to fail: mutation-check a new test before trusting it, and
+  make sure a "green" claim comes from real output.
+- Rebuild the frontend before believing a page works (`web/build` is what the Rust
+  binary serves).
+- Mirror push to `github` after merges.
 - Don't touch fichub on port 8000.
 
 ---
@@ -115,13 +142,23 @@ https://streakforge.polarisocial.xyz — usable for manual QA; delete when done.
 
 - axum 0.8: `{capture}` routes, not `:capture`.
 - tower-sessions 0.14 pairs with sqlx-store 0.15.
-- Never edit applied migrations (checksum lock).
+- Never edit applied migrations (checksum lock). 0011 is the newest.
+- `CREATE OR REPLACE FUNCTION` cannot change a function's OUT list (42P13) — drop
+  leaves-first and recreate.
+- SQLx decodes function results POSITIONALLY: a changed column list is a runtime 500
+  with every test green. `public_function_signatures_are_pinned` guards the five public
+  functions.
+- usernames are `^[a-zA-Z0-9_]{2,30}$` — no hyphens (your own test fixtures included).
 - CSS `//` comments break `:root` in the browser — use `/* */`.
 - `user_streak()` returns INT4; cast `::bigint` in Rust queries.
 - Auth forms need JS: register/login require the sha256 nonce challenge + 3s–10min
-  form timing + empty honeypot (SPEC §9).
-- Sessions invalidate on restart (ephemeral key).
+  form timing + an empty honeypot (SPEC §9). Any scripted probe must reproduce all
+  three, including for FAILED login attempts.
+- `i64::div_ceil` is not available on this toolchain — use `(a + b - 1) / b`.
+- Behind the tunnel, the client IP comes from `CF-Connecting-IP` / `X-Forwarded-For`;
+  the socket address is always loopback.
 
 ---
 
-*Deep dives: SPECIFICATION.md (what/why), ARCHITECTURE.md (how), OPERATIONS.md (ops).*
+*Deep dives: SPECIFICATION.md (what/why), ARCHITECTURE.md (how), OPERATIONS.md (ops,
+including backups), 100_IDEAS.md (what's next and why that order).*

@@ -6,24 +6,39 @@ Written 2026-10-14, against the tree at `1fd713d` (migrations 0001–0010, 20 ro
 
 **What is deliberately not here.** `Freeze days`, `longest streak as the headline` and `backdated entry` are already filed — in a second, local Concord instance (features 19-21 there, complaints 17/18), *not* in the public project this list was filed to, which held two features and two complaints when this was written. Re-proposing them would be noise either way. Nothing here proposes ads, a paywall on the counter or the board, email-required signup, or anything that rewards wasting over denying; see `FEATURE_IDEAS.md` for why.
 
+**Status 2026-10-14: ranks 01–16 are SHIPPED** — every item scoring ≥ 2.5, in one
+pass (`91fc795`, plan and per-item acceptance tests in
+`docs/plans/2026-10-14-tier-1-and-tier-2.md`, evidence in SPEC §21). Ranked
+highest-value first was the right order: the list's top item was a live privacy leak
+that every one of the 512 logs in production was exposed to, and it was one line of
+SQL. What the 16 items turned into is recorded in SPEC §3.6, §7.2, §7.4, §7.6, §14.1,
+§15, §16 and §17; the honest summary is that four of them (01, 11, 13, 16) changed
+what the site measures, and the other twelve changed what it tells you.
+
+Nothing below rank 16 was started. Ranks 17–20 are the next candidates by score, and
+the note at the bottom of this file still stands: the strategic bets (the keyholder,
+the lock seal) score low here **because effort is the denominator** — that is the
+ranking working, not the ideas being weak.
+
 | # | Score | Idea | Impact | Effort | Size | Area |
 |---|-------|------|--------|--------|------|------|
+| ~~01~~ | ~~9.0~~ | ~~Stop publishing log notes to the anonymous feed~~ **SHIPPED** | 9 | 1 | S | Privacy |
 | 01 | **9.0** | Stop publishing log notes to the anonymous feed | 9 | 1 | S | Privacy |
-| 02 | **6.0** | Set Secure and the __Host- prefix on the session cookie | 6 | 1 | S | Privacy |
-| 03 | **5.0** | Back up the production database | 10 | 2 | S | Ops |
-| 04 | **5.0** | robots.txt and a sitemap.xml | 5 | 1 | S | SEO |
-| 05 | **3.5** | CI: run the gate on every push | 7 | 2 | S | Ops |
-| 06 | **3.5** | Throttle failed logins per account and per IP | 7 | 2 | S | Auth |
-| 07 | **3.0** | Add Open Graph and Twitter meta tags | 6 | 2 | S | Growth |
-| 08 | **3.0** | An 18+ interstitial and a clear terms line | 6 | 2 | S | Compliance |
-| 09 | **3.0** | Pin activity_feed's column list with a test | 6 | 2 | S | Ops |
-| 10 | **3.0** | Who denied today: a live same-day counter | 6 | 2 | S | Social |
-| 11 | **2.67** | Score by day, not by row, now that a day can hold five logs | 8 | 3 | M | Scoring |
-| 12 | **2.5** | A glossary for the language | 5 | 2 | S | Content |
-| 13 | **2.5** | Anti-sybil: account age before a board appearance | 5 | 2 | S | Scoring |
-| 14 | **2.5** | Log from a deep link or one-key URL | 5 | 2 | S | Streaks |
-| 15 | **2.5** | Show the day's remaining budget and the clock together | 5 | 2 | S | Streaks |
-| 16 | **2.5** | Warn before the 30-day decay erases a score | 5 | 2 | S | Scoring |
+| 02 | **6.0** | Set Secure and the __Host- prefix on the session cookie **— SHIPPED** | 6 | 1 | S | Privacy |
+| 03 | **5.0** | Back up the production database **— SHIPPED** (and rehearsed) | 10 | 2 | S | Ops |
+| 04 | **5.0** | robots.txt and a sitemap.xml **— SHIPPED** | 5 | 1 | S | SEO |
+| 05 | **3.5** | CI: run the gate on every push **— SHIPPED** (fmt advisory, clippy errors-only) | 7 | 2 | S | Ops |
+| 06 | **3.5** | Throttle failed logins per account and per IP **— SHIPPED** | 7 | 2 | S | Auth |
+| 07 | **3.0** | Add Open Graph and Twitter meta tags **— SHIPPED** (static, honestly so) | 6 | 2 | S | Growth |
+| 08 | **3.0** | An 18+ interstitial and a clear terms line **— SHIPPED** (an acknowledgement, and it says so) | 6 | 2 | S | Compliance |
+| 09 | **3.0** | Pin activity_feed's column list with a test **— SHIPPED** (five functions, broken on purpose to prove it) | 6 | 2 | S | Ops |
+| 10 | **3.0** | Who denied today: a live same-day counter **— SHIPPED** (`/api/today`) | 6 | 2 | S | Social |
+| 11 | **2.67** | Score by day, not by row, now that a day can hold five logs **— SHIPPED** | 8 | 3 | M | Scoring |
+| 12 | **2.5** | A glossary for the language **— SHIPPED** (17 terms, each naming its enforcement) | 5 | 2 | S | Content |
+| 13 | **2.5** | Anti-sybil: account age before a board appearance **— SHIPPED** (24h) | 5 | 2 | S | Scoring |
+| 14 | **2.5** | Log from a deep link or one-key URL **— SHIPPED** (`/log?kind=`) | 5 | 2 | S | Streaks |
+| 15 | **2.5** | Show the day's remaining budget and the clock together **— SHIPPED** | 5 | 2 | S | Streaks |
+| 16 | **2.5** | Warn before the 30-day decay erases a score **— SHIPPED** (`days_until_decay`) | 5 | 2 | S | Scoring |
 | 17 | **2.33** | A consistency board: percentage of days logged | 7 | 3 | M | Scoring |
 | 18 | **2.33** | A running lock-streak board | 7 | 3 | M | Lock |
 | 19 | **2.0** | A public ledger: dates and kinds, nothing else | 6 | 3 | M | Trust |

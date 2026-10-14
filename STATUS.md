@@ -1,6 +1,45 @@
 # StreakForge — Development Status
 
-Last updated: 2026-09-28
+## 2026-10-14 — tier 1 and tier 2 of the ranked 100 (`91fc795`)
+
+Sixteen items from `docs/100_IDEAS.md` — everything scoring ≥ 2.5 — shipped in one
+pass. Plan with a decision and an acceptance test per item:
+`docs/plans/2026-10-14-tier-1-and-tier-2.md`. Evidence: SPEC §21.
+
+**The four that changed what the site measures**
+
+- **Notes are private (01).** `activity_feed()` returned `note` to unauthenticated
+  callers, so the confession box was published to the anonymous feed and rendered on
+  the landing page. Every one of the 512 logs in production had a note. The column is
+  gone from the function's result type; the feed maps into a `PublicFeedItem` that has
+  no note field; the dashboard still shows you your own.
+- **The score counts days, not rows (11).** `count(distinct log_date)` for both WLW and
+  WLD. Raising the waste budget to 5 a day had made a day of wasting worth 5×.
+- **A board place needs a 24-hour-old account (13).**
+- **The decay warns instead of surprising (16).** `days_until_decay` on the index, ⚠ at
+  10 days, and a different message once the score is already gone.
+
+**The twelve that changed what the site tells you**
+
+02 `__Host-`+`Secure` cookie (signs everyone out once, done) · 03 nightly backups at
+03:30 with a REHEARSED restore · 04 robots.txt + sitemap · 05 CI on every push ·
+06 login throttle (5/username, 30/address, 15 min) · 07 og/twitter cards + a real
+1200×630 PNG · 08 18+ acknowledgement + /terms that admits it is not enforcement ·
+09 five public SQL function signatures pinned as literals · 10 /api/today ·
+12 /glossary · 14 /log?kind= deep links · 15 budget + reset clock on one line.
+
+**Verified on the live site, not only in tests**: the `__Host-` cookie and
+`/api/auth/me`; 50 feed items with no `note` key while 512 notes remain in Postgres;
+`/api/today` matching a direct SQL count; five bad logins → 429 with `Retry-After:
+899`, the correct password refused while throttled, and a different username still
+able to sign in; robots/sitemap/og.png served; and in a real browser the 18+ overlay,
+the note-free landing page, all 17 glossary terms, /terms, and `/log?kind=denial`
+plus the unknown-kind fallback.
+
+**Gates**: backend `cargo test` 20 lib + 48 integration; frontend 93 vitest across 11
+files, `svelte-check` 0/0, `vite build` green. Deploy: 15/15 health checks 200.
+
+Last updated: 2026-10-14
 
 ## 2026-09-28 — the `wip/recover-2026-08-work` review
 
@@ -119,8 +158,10 @@ duplicate branch name is left as a separate, explicit step.
   profile CRUD, drill separate budgets, doctrine + traversal 400).
 - Browser-tested end-to-end: login → dashboard → log → leaderboard tabs → feed →
   profile → settings update → drill (counter/card/rate-limit hint) → doctrine.
-- Backend: `cargo test --test integration` — 17/17 pass.
-- Frontend: `vitest run` — 47/47 pass; `svelte-check` — 0 errors.
+- Backend: `cargo test` — 20 unit + 48 integration pass (2026-10-14; an earlier count
+  of 17 integration tests in this file predates both the auth and the 0011 work).
+- Frontend: `vitest run` — 93/93 pass across 11 files; `svelte-check` — 0 errors,
+  0 warnings (2026-10-14; the two long-standing warnings are gone).
 - Deployed: thinkcentre port 8001, systemd active, all routes 200, auth enforced,
   dev-login removed (routes 404); public at https://streakforge.polarisocial.xyz;
   pushed private to opencommit.eu/MagicZhang/streakforge.

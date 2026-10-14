@@ -16,7 +16,10 @@ highlights, mono-spaced tabular counters, and a scrolling marquee.
 
 ## Documentation
 
-Full context lives in `docs/` — read these before working on the code:
+Full context lives in `docs/` — read these before working on the code. **If a doc and
+the code disagree, the code wins and the doc is a bug**: several sections here and in
+the spec were describing pre-0008 behaviour until 2026-10-14, which is how a stale
+sentence becomes a wrong decision six months later.
 
 | File | Contents |
 |------|----------|
@@ -24,6 +27,9 @@ Full context lives in `docs/` — read these before working on the code:
 | `docs/ARCHITECTURE.md` | Deep dive: module map, data flow, concurrency, migration strategy, extension points |
 | `docs/OPERATIONS.md` | Run/deploy/monitor/troubleshoot (local + thinkcentre prod) |
 | `docs/SESSION_CONTEXT.md` | Session-recovery cheat sheet |
+| `docs/100_IDEAS.md` | 100 ideas ranked by impact ÷ effort; ranks 01–16 shipped 2026-10-14 |
+| `docs/plans/2026-10-14-tier-1-and-tier-2.md` | The plan for those 16 items: a decision and an acceptance test each |
+| `docs/OPERATIONS.md` | including backups (§6): the nightly dump and the restore rehearsal |
 
 Plus `STATUS.md` for the living dev-status checklist.
 
@@ -43,14 +49,28 @@ Plus `STATUS.md` for the living dev-status checklist.
   - Clear 429 messages that name both the limit and the time it resets.
 - **Personal dashboard** — today's count, current streak, longest streak, this
   week, all-time, recent logs, and a 30-day streak heatmap.
-- **Community leaderboards** — Daily (UTC), Weekly (Monday UTC start), and
-  All-time. Top 50 each, with rank, avatar, username, count, and last-log time.
+- **Community leaderboards** — Daily (rolling 24h), Weekly (7d), Monthly (30d) and
+  All-time, scored by the **Whiteboi Devotion Index**
+  (`(days wasted + days denied + drill bonus) × streak multiplier`), not by log count:
+  five logs in one day count once, because consistency should beat volume. An account
+  must be 24 hours old to hold a place. Top 50 each.
 - **User of the Day** — highest today's count; ties broken by earliest log.
 - **Community KPI dashboard** — a public `/kpi` page: loads wasted/denied
   totals, denial rate, affirmations, active (24h) and new (7d) users,
   currently-locked count, all-time lock hours, a 30-day stacked trend chart,
   and the top weekly board. No auth, like the landing counters.
-- **Public activity feed** — reverse-chronological, cursor-paginated, with notes.
+- **Public activity feed** — reverse-chronological, cursor-paginated. **Activity
+  only: notes are private** and only their author ever reads them back, on their own
+  dashboard. (They used to be published here; see `docs/100_IDEAS.md` #01 and SPEC
+  §7.4.)
+- **A day's budget, a live clock, and a decay warning** — the dashboard shows how many
+  logs are left today and when the cadence resets, warns ten days before 30 days of
+  silence would wipe the score, and explains the score by its components.
+- **Deep-link logging** — `/log?kind=habit|denial|affirmation&note=…` records in one
+  tap from a phone shortcut, including the signed-out path through `/login?next=`.
+- **Glossary and terms** — `/glossary` defines every noun the score is made of, each
+  entry naming where the rule is enforced; `/terms` states what is public, what is
+  private, and that the 18+ notice is an acknowledgement rather than an age check.
 - **Profiles** — public username, display name, avatar (DiceBear fallback),
   stats. Editable in Settings.
 - **Doctrine** — a `/doctrine` page serving curated doctrine/training texts
@@ -169,7 +189,8 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | GET    | `/api/leaderboard/{period}` | —  | daily / weekly / alltime             |
 | GET    | `/api/user-of-the-day`    | —    | Today's top user                     |
 | GET    | `/api/total`              | —    | Total completions (hero counter)     |
-| GET    | `/api/feed`               | —    | Public feed (cursor + limit)         |
+| GET    | `/api/today`              | —    | Today's denials / wastes / distinct loggers (UTC) |
+| GET    | `/api/feed`               | —    | Public feed (cursor + limit) — activity only, no notes |
 | GET    | `/api/profile/{username}` | —    | Public profile stats (+ social_url)  |
 | PATCH  | `/api/profile`            | ✓    | Update username/display/avatar/social_url |
 | GET    | `/api/doctrine`          | —    | List doctrine docs                   |
@@ -190,11 +211,32 @@ with `row_number()` grouping).
 
 ### Rate limits
 
-- 1 log / 60 min / user / kind — checked against `logged_at >= now() - 60 min`.
-- 5 logs / UTC day / user / kind — checked against `log_date = today (UTC)`.
-- `habit` and `affirmation` have independent budgets (drilling doesn't consume
-  your daily habit allowance).
-- Enforced in `check_rate_limits()` in `api.rs`, before any insert.
+- 5 logs / UTC day / user / kind (`WLW_DAILY_LIMIT`, default 5) — checked against
+  `log_date = today (UTC)`. A denial is 1/day; drill reps have their own budget.
+- `habit`, `denial` and `affirmation` have independent budgets (drilling doesn't
+  consume your daily waste allowance), and the loan rule holds as always: one waste or
+  one denial fills a day, never both.
+- Enforced in `check_rate_limits()` in `api.rs`, **before any insert**.
+- **Failed logins have their own throttle** (5 per username, 30 per address, per 15
+  minutes), checked before any password hashing, in a table so an API restart does not
+  reset it. A successful sign-in clears that username's failures, not the address's.
+
+### The score (Whiteboi Devotion Index)
+
+```
+score = (days wasted + days denied + drill bonus) x multiplier
+```
+
+- **Days, not logs.** Five wastes in one day are one day of devotion. Repetition does
+  not buy rank — which is exactly what the old row-based count allowed once the daily
+  budget became five.
+- **Multiplier** comes from the active streak: 1.0 (<7 days), 1.25 (7–13), 1.5 (14–29),
+  2.0 (30+).
+- **Drill bonus** is one point per three reps. Drill reps never hold a streak.
+- **Decay**: 30 days without any log wipes the score; `/api/stats` reports
+  `days_until_decay` so the dashboard warns at ten days. Lifetime totals never decay.
+- **A board place needs a 24-hour-old account**, so making a second account to top a
+  board is not free.
 
 ### User of the Day
 
@@ -204,16 +246,20 @@ day, then all-time total. See `user_of_the_day()` in `0002_leaderboards.sql`.
 ## Testing
 
 ```bash
-# Backend (needs local Postgres, streakforge_test DB)
+# Backend (needs a local Postgres the role can create databases in)
 cd backend
-DATABASE_URL=postgres://streakforge:streakforge_dev@127.0.0.1:5432/streakforge_test cargo test
+DATABASE_URL=postgres://<role>:<pw>@127.0.0.1:5432/<any-db> cargo test
 
-# 26 tests: 8 unit + 18 integration. The integration tests need the test
-# database to exist AND the role's password to actually be the one above --
-# sqlx's test harness panics with "failed to connect to setup test database"
-# and a bare 28P01 if the password drifted, which reads as a broken suite
-# rather than a credential mismatch. Reset it with:
-#   sudo -u postgres psql -c "ALTER ROLE streakforge WITH PASSWORD '...';"
+# 68 tests: 20 unit + 48 integration. Each integration test creates and drops its
+# own scratch database (sqlx::test), so DATABASE_URL is a maintenance connection
+# rather than a fixture schema -- point it at any database the role can reach.
+#
+# Two failure modes read as a broken suite rather than as what they are:
+#   * a bare 28P01 means the credential drifted, not that the tests are wrong;
+#   * "failed to connect to setup test database" usually means the role lacks
+#     CREATEDB, which sqlx::test needs for its per-test scratch databases.
+#
+# CI (.github/workflows/ci.yml) does exactly this against a postgres:16 service.
 
 # Frontend
 cd web
@@ -231,7 +277,7 @@ Read from the environment at startup (`backend/src/config.rs`):
 | `SESSION_SECRET` | dev placeholder | **sessions are signed with this.** The signing key is derived from it, so it must be set and must not change between deploys — changing it signs every user out once. Set in prod (64 hex chars). |
 | `SESSION_TTL_DAYS` | `30` | days of inactivity before a session expires (1–365) |
 | `WLW_DAILY_LIMIT` | `5` | loads wasted allowed per UTC day per user (1–100) |
-| `SECURE_COOKIES` | `0` | `1` behind HTTPS (sets `Secure` on the session cookie) |
+| `SECURE_COOKIES` | `0` | `1` behind HTTPS. Sets `Secure` AND renames the cookie to `__Host-streakforge_session` (browser-enforced prefix: Secure, `Path=/`, no `Domain`). **Turning it on signs every existing user out once** — the old cookie name is ignored. Set to `1` by `deploy.sh` in production. |
 | `PUBLIC_URL` | `http://127.0.0.1:8787` | CORS origin |
 | `WEB_BUILD_DIR` | `./web/build` | static frontend root |
 | `MIGRATIONS_DIR` | `./migrations` | sqlx migrations |

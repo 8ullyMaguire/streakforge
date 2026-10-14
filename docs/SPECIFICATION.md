@@ -1,8 +1,10 @@
 # StreakForge — Complete Specification
 
 > **Document status:** authoritative, generated from the actual codebase and verified
-> behavior on 2026-08-10. Every claim here was exercised by real tool output during
-> development (tests, API calls, browser sessions, deployment checks).
+> behavior on 2026-08-10, **substantially revised 2026-10-14**. Every claim here was
+> exercised by real tool output during development (tests, API calls, browser
+> sessions, deployment checks). Sections rewritten on 2026-10-14 are marked in place;
+> the five rule changes are summarised immediately below the table of contents.
 >
 > **Purpose:** this is the single source of truth for StreakForge. It exists so a
 > fresh coding agent (or a human) can reconstruct full context from this document
@@ -37,6 +39,25 @@
 23. [Roadmap & Out of Scope](#23-roadmap--out-of-scope)
 
 ---
+
+> **Changed 2026-10-14 (tier 1 + tier 2 of `docs/100_IDEAS.md`).** Five rules in
+> this document are different from what an earlier copy said, and each one is the
+> point of a shipped change rather than a wording fix:
+>
+> 1. **Notes are private.** `activity_feed()` returns no note column at all; the
+>    feed, the landing page and `/feed` show activity without words. See §7.4, §15.
+> 2. **The Devotion Index counts DAYS, not rows.** `count(distinct log_date)` — see
+>    §7.2. Repetition cannot buy rank, which the old count(*) allowed the moment a
+>    day could hold five wastes.
+> 3. **A board place needs a 24-hour-old account** (§7.2), and the index reports
+>    `days_until_decay` so the 30-day wipe can be warned about (§7.6).
+> 4. **Failed logins are throttled** — 5 per username, 30 per address, per 15
+>    minutes (§14).
+> 5. **The session cookie is `__Host-` + `Secure` in production** (§15), which
+>    signed every existing user out exactly once on the deploy that enabled it.
+>
+> The reasoning, the per-item acceptance tests and the alternatives are in
+> `docs/plans/2026-10-14-tier-1-and-tier-2.md`.
 
 ## 1. Product Overview
 
@@ -149,6 +170,16 @@ The project was created in a single session on 2026-08-10, driven by a design do
 - 401 redirect to `/login` on protected pages.
 - Mobile-first responsive design.
 - Dark mode only (system + manual toggle is not implemented — the theme is dark-only).
+- `/glossary` defines every noun the site scores with, each entry naming where the
+  rule is enforced (`web/src/lib/glossary.ts`, tested as content).
+- `/terms` states the age requirement, what is public, and that the acknowledgement
+  is a courtesy notice rather than an age check. An 18+ overlay
+  (`AgeGate.svelte`) appears once per browser.
+- `/log?kind=habit|denial|affirmation&note=…` records a log from a deep link, in
+  one tap, with the signed-out path preserved through `/login?next=`.
+- The dashboard shows the remaining budget and the reset clock on one line, and
+  warns ten days before the score decays (`/api/stats` → `days_until_decay`).
+- Static Open Graph / Twitter card metadata, `robots.txt` and a `sitemap.xml`.
 
 ---
 
@@ -368,11 +399,38 @@ Verified cases:
 
 ### 7.2 Leaderboard ranking
 
-- **Primary**: count DESC.
-- **Secondary**: earliest max log (`min(l.logged_at)` ASC) — "first to reach the count".
-- `daily_leaderboard(50)`: logs where `log_date = today(UTC)`, kind='habit'.
-- `weekly_leaderboard(50)`: logs where `logged_at >= date_trunc('week', now() at time zone 'utc')` (Monday 00:00 UTC), kind='habit'.
-- `alltime_leaderboard(50)`: all logs, kind='habit'.
+**The boards are the Whiteboi Devotion Index, not a log count.** (The old scheme —
+`count(*)` DESC with the earliest logger breaking ties — was replaced by migration
+0008; this section said otherwise until 2026-10-14 and was simply stale.)
+
+```
+devotion_leaderboard(p_interval, p_limit)
+  score = (wlw + wld + game_bonus) x multiplier
+  wlw   = count(distinct log_date) filter (kind = 'habit')
+  wld   = count(distinct log_date) filter (kind = 'denial')
+  bonus = floor(count(*) filter (kind = 'affirmation') / 3)
+  multiplier = 1.0 (<7d) | 1.25 (7-13) | 1.5 (14-29) | 2.0 (30+), by the active streak
+  where score > 0
+    and p.created_at <= now() - interval '24 hours'      -- sybil floor
+  order by score desc, last_log_at asc nulls last
+```
+
+- **Days, not rows** (0011). Five wastes in one day count once. The daily budget
+  change from 1 to 5 made the row-based count worth 5× a day of devotion, so
+  repetition bought rank; this is the fix for the defect that introduced.
+- **24-hour account-age floor** (0011): an account younger than a day holds no board
+  slot, so making a second account to top a board is not free. It is an age floor,
+  not a verification — a determined farmer can wait a day, which is the honest limit
+  of a rule that cannot check anything.
+- **Windows** are rolling and are `p_interval` seconds back from now:
+  `daily_leaderboard_weighted(50)` = 24h, `weekly_…` = 7d, `monthly_…` = 30d,
+  `alltime_…` = NULL, which resolves to the 30-day decay horizon (**not** all
+  history — that is `lifetime_total`, which nothing sorts by).
+- **Tie-break**: the earlier `last_log_at` wins; `nulls last` so a row that cannot
+  have one sorts after every row that can.
+- The old `*_leaderboard(n)` functions (count-based, habit-only) still exist for
+  the places that count rather than score: `/api/total`, the profile counters and
+  `user_of_the_day()`.
 
 ### 7.3 User of the Day
 
@@ -391,7 +449,9 @@ card). Verified: two users with 1 log each — the earlier logger is UOTD.
 ### 7.4 Feed pagination
 
 ```
-activity_feed(p_cursor bigint, p_limit int):
+activity_feed(p_cursor bigint, p_limit int) returns table (
+  id, user_id, username, display_name, avatar_url, logged_at       -- NO note
+):
   where (p_cursor = 0 or l.id < p_cursor) and kind = 'habit'
   order by l.id desc
   limit p_limit
@@ -400,10 +460,46 @@ activity_feed(p_cursor bigint, p_limit int):
 Cursor is the last item's `id` (keyset pagination, stable). The API returns
 `next_cursor` = last id when the page is full, else null.
 
+**The `note` column is gone (0011), and that is the most important line in this
+section.** It used to be returned to unauthenticated callers and rendered on the
+landing page and `/feed`, so the 140-character box that reads as a confession was
+published the moment it was written — every one of the 512 logs in production on
+2026-10-14 carried a note. Removing it from the function's RESULT TYPE rather than
+from the SELECT is deliberate: a column the SQL cannot produce is a column the
+handler cannot leak, and the handler maps into `PublicFeedItem`, which has no note
+field. A user's own notes still come back from `/api/stats` (authenticated,
+self-scoped), which is what the dashboard renders. No per-user "publish my notes"
+toggle exists: nothing in the UI ever said notes were public, so shipping a toggle
+would have shipped the leak switched on for everyone.
+
 ### 7.5 Profile stats
 
 `profile_stats(p_user)` / inline queries return: streak, longest_streak, today_count,
 week_count, alltime_count — all filtered to kind='habit' for the public profile surface.
+
+### 7.6 The day, the decay, and the counters
+
+**Everything cadenced is a UTC calendar day** — one `log_date` column, generated from
+`logged_at`, and every rule keys on it. A log at 23:59 belongs to the day it started,
+so a streak cannot be broken by sleeping late.
+
+**The 30-day era.** `devotion_index(uuid, timestamptz)` scores only logs inside its
+window; with `p_since` NULL the window is the last 30 days, which is the all-time
+rule rather than a board window. Silence for 30 days wipes the score to zero while
+`devotion_lifetime` keeps the record. Since 0011 the index also returns:
+
+| column | meaning |
+|---|---|
+| `days_until_decay` | `30 - whole days since the newest log`, floored at 0; **NULL** for a user with no logs (nothing to lose yet) |
+| `decayed` | has logs, none inside 30 days — the score is already gone |
+
+The dashboard warns at ≤10 days, and says something different once the score has
+already been wiped, because "0 days left" and "already gone" need different actions.
+
+**`today_counts()`** returns `(denials_today, wastes_today, loggers_today)` over
+`log_date = today (UTC)`, and `/api/today` serves it unauthenticated. It duplicates
+nothing that `/api/kpi` cannot derive; its purpose is a line on the landing page
+saying the place is alive right now, which a lifetime total can never say.
 
 ---
 
@@ -474,11 +570,19 @@ Base URL: `/api` (proxied by the SPA in dev; same origin in production).
 | GET | `/leaderboard/{period}` | — | `{"period": "daily|weekly|alltime", "entries": [LeaderboardEntry×50]}` |
 | GET | `/user-of-the-day` | — | `UserOfTheDay \| null` |
 | GET | `/total` | — | `{"total": N}` (habit kind only) |
-| GET | `/feed?cursor=&limit=` | — | `{"items": [FeedItem], "next_cursor": N\|null}` |
+| GET | `/feed?cursor=&limit=` | — | `{"items": [PublicFeedItem], "next_cursor": N\|null}` |
+| GET | `/today` | — | `{denials_today, wastes_today, loggers_today}` |
 
-`LeaderboardEntry`: `{ rank, user_id, username, display_name, avatar_url, count, last_log_at }`
 `UserOfTheDay`: `{ user_id, username, display_name, avatar_url, count, first_log_at, alltime_count }`
-`FeedItem`: `{ id, user_id, username, display_name, avatar_url, logged_at, note }`
+
+`PublicFeedItem`: `{ id, user_id, username, display_name, avatar_url, logged_at }` —
+**no `note`**, by the rule in §7.4. `FeedItem` (with `note`) still exists and is what
+`/api/stats` returns inside `recent_logs`: the caller's own rows, authenticated.
+
+`LeaderboardEntry` is the scored shape
+(`{ rank, user_id, username, display_name, avatar_url, score, wlw, wld, game_bonus,
+multiplier, streak, active_kind, denial_count, lifetime_total, last_log_at }`) — see
+§7.2. An earlier copy of this table said `count`, which was the pre-0008 board.
 
 ### 8.4 Profiles
 
@@ -765,6 +869,34 @@ space, capitalize first letter).
   that locks everyone out.
 - No Redis needed for v1 (documented as a future upgrade path).
 
+### 14.1 Failed-login throttle (0011)
+
+Logging in has its own limiter, separate from the logging budgets above:
+
+| counter | ceiling | window |
+|---|---|---|
+| per username (case-insensitive) | 5 | 15 minutes |
+| per client address | 30 | 15 minutes |
+
+- **Checked before any password work.** A throttle that only fires after Argon2
+  protects the account and not the machine; a guessing loop would still spend the
+  server's hashing budget.
+- **Counted for unknown usernames too.** That is where enumeration attempts land, and
+  a throttle keyed only on real accounts would leave the enumeration path unlimited.
+- **Storage** is a table (`login_attempts`), not an in-process counter: the deploy
+  restarts the API, and an attacker who can wait for a restart should not get their
+  budget back. Each insert prunes rows older than 4× the window for its own username
+  and address, so the table stays bounded with no scheduled job.
+- **The address** comes from `CF-Connecting-IP`, then the first `X-Forwarded-For` hop,
+  then `unknown`. Only loopback can reach the listener (behind the tunnel), which is
+  what makes those headers trustworthy here.
+- **A successful login clears that username's failures, not the address's.** One
+  legitimate sign-in does not prove the other guesses from a shared address were
+  benign.
+- The refusal is `429` with a message naming the wait and a `Retry-After` header.
+- **The two ceilings are deliberately different by 6×** so a household, cafe or office
+  behind one address is not locked out by one person's five failed tries.
+
 ---
 
 ## 15. Security
@@ -786,6 +918,24 @@ space, capitalize first letter).
   3s–10min form timing, and a valid sha256 nonce challenge proof (see §9.3).
 - **CORS**: dev CORS allows the configured PUBLIC_URL origin with credentials.
 - Unknown `/api/*` paths return 404 (the SPA fallback refuses `/api/` prefixes).
+- **Session cookie**: `HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age` =
+  `SESSION_TTL_DAYS` (30). With `SECURE_COOKIES=1` (set in production) it is named
+  `__Host-streakforge_session` and carries `Secure`. `__Host-` is enforced BY THE
+  BROWSER: the prefix is accepted only with `Secure`, `Path=/` and no `Domain`, so a
+  subdomain or a plaintext connection cannot overwrite the session. The prefixed name
+  is applied only when the cookie is secure, because a browser silently rejects
+  `__Host-` without `Secure` — over local HTTP that would mean no session at all.
+  **Enabling it signs every existing user out once**, since the old name is simply
+  ignored; that is the cost of the prefix and it is paid once.
+- **Notes are private by construction** (§7.4): the public feed's SQL function has no
+  note column, so no handler can leak one. The 140-character limit is enforced
+  server-side (`Note must be 140 characters or fewer`), and the deep-link page clamps
+  client-side too because a link's note is usually assembled by a script.
+- **`next=` on /login is an open-redirect guard**: only a same-site absolute path is
+  honoured (`/…`, never `//host` or a scheme), tested in `deeplink.test.ts`.
+- **The 18+ overlay is NOT access control** and the terms say so: it stores a marker
+  in the visitor's own browser, nothing server-side reads it, and a URL bar defeats
+  it. Claiming otherwise would be worse than no notice.
 
 ---
 
@@ -793,8 +943,11 @@ space, capitalize first letter).
 
 ### 16.1 Backend (Rust)
 
-`backend/tests/integration.rs`, 13 tests, all `#[sqlx::test(migrations = "./migrations")]`
-(creates a throwaway DB per test from the migrations):
+`backend/tests/integration.rs`, **48 tests**, all `#[sqlx::test(migrations = "./migrations")]`
+(creates a throwaway DB per test from the migrations), plus **20 unit tests** in
+`src/*_tests.rs` (`cargo test --lib`) for the pure helpers: password hashing, the
+challenge proof, form timing, the session key derivation, the login throttle's
+arithmetic and the cookie naming.
 
 1. `streak_calculation_basic` — no logs (0,0); one today (1,1).
 2. `streak_multiple_days` — 3-day run, gap, 7-day past run: current=3, longest=7.
@@ -808,41 +961,77 @@ space, capitalize first letter).
    (no user-enumeration); bot-dissuasion (honeypot, form timing, bad challenge
    proof) → 400; social_url round-trip through PATCH /profile.
 
-Run (needs local Postgres + `streakforge_test` DB):
 ```bash
 cd backend
-DATABASE_URL=postgres://streakforge:streakforge_dev@127.0.0.1:5432/streakforge_test cargo test --test integration
+DATABASE_URL=postgres://<role>@127.0.0.1:<port>/<any-db-the-role-can-create-in> cargo test
 ```
-**Never run the full workspace test suite** (cargo ~10min). Target the integration
-suite.
+
+Any database the role can reach with CREATEDB works as `DATABASE_URL`: each test
+creates and drops its own scratch database, so the value points at a maintenance
+connection, not at a fixture schema. Both suites together run in a few seconds once
+compiled.
+
+**The pinning test** (`public_function_signatures_are_pinned`) deserves a note of its
+own. It compares `pg_get_function_result()` for `activity_feed`, `devotion_index`,
+`devotion_leaderboard`, `kpi_totals` and `today_counts` against literal strings. That
+is deliberately brittle: SQLx decodes these rows positionally, so a renamed, retyped
+or reordered OUT column is a 500 on a public page with every other test green — the
+failure that has broken a board twice. It was verified by MUTATING the migration
+(`days_until_decay bigint` → `integer`): the test goes red and names the column. A
+pinning test that cannot fail is decoration.
 
 ### 16.2 Frontend (Vitest)
 
-`web/src/lib/*.test.ts`, 33 tests across 5 files:
+`web/src/lib/*.test.ts`, **93 tests across 11 files**. The new ones follow a rule the
+older ones established: logic that a page depends on is a PURE MODULE with its own
+test, so it can be exercised without a DOM (and without a browser-only test runner).
 
 - `api.test.ts` (12) — nonce/register/login payloads, error surfacing, timeAgo
   boundaries, formatCount padding.
 - `validation.test.ts` (4) — isValidUsername.
-- `markdown.test.ts` (8) — headings, bold/italic, links, escaping, lists, blockquote,
+- `markdown.test.ts` (17) — headings, emphasis, links, escaping, lists, blockquote,
   code blocks, hr.
-- `affirmations.test.ts` (4) — deck non-empty, fields present, deterministic daily pick,
-  cycle wrap.
-- `challenge.test.ts` (5) — sha256 proof computation matches the expected 16-hex
-  prefix, nonce handling, edge inputs.
+- `affirmations.test.ts` / `challenge.test.ts` / `kpi.test.ts` / `typo.test.ts` — the
+  deck, the sha256 proof, the KPI shape, the typographic pass.
+- `countdown.test.ts` (15) — the cadence countdown, plus `budgetLabel`: the dashboard
+  line reads "5 of 5 left · resets in 24h 0m" at the start of a day and "59m" a minute
+  later, computed from the server's seconds and an explicit elapsed time so a fake
+  clock is enough (item 15).
+- `deeplink.test.ts` (9) — kind parsing including the unknown-kind FALLBACK (which is
+  reported, not silent), note truncation by code point so an emoji is not cut in half,
+  and the `next=` open-redirect guard (item 14).
+- `agegate.test.ts` (4) — anything but the exact marker counts as "not acknowledged"
+  (item 08).
+- `glossary.test.ts` (6) — the glossary is asserted as CONTENT: every required term
+  present, no duplicates, each entry naming an enforcement point, and every internal
+  link resolving to a route that exists on disk (item 12).
 
-Run (targeted):
 ```bash
 cd web
-npx vitest run src/lib/api.test.ts src/lib/validation.test.ts   # or any file
+node node_modules/vitest/vitest.mjs run      # or: npm test
+node node_modules/svelte-check/bin/svelte-check
+node node_modules/vite/bin/vite.js build
 ```
-Plus `npm run check` (svelte-check, 0 errors; 2 pre-existing warnings: deprecated
-`<slot />` and a self-closing div).
+`npm run check` is 0 errors / 0 warnings as of this pass (the two long-standing
+warnings were fixed: the deprecated `<slot />` and a self-closing div).
 
-### 16.3 Ad-hoc verification
+Component tests are deliberately absent: `@testing-library/svelte` is in
+devDependencies but no jsdom environment is configured, and every page change in this
+pass was verified in a real browser against the live site instead (§21).
 
-During development a temp script (`/tmp/hermes-verify-streakforge.sh`) was used for
-end-to-end checks: routes 200, SPA shell, rate-limit 201→429, separate budgets,
-manifesto count, traversal 400. It is removed after each run (not committed).
+### 16.3 CI
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+- **backend**: a `postgres:16` service, then `cargo fmt --check` (ADVISORY — the tree
+  is not rustfmt-clean and never has been; 101 diffs at the time of writing), `cargo
+  clippy --all-targets` (fails on errors, prints the ~10 pre-existing style warnings),
+  and `cargo test`.
+- **frontend**: `npm ci`, `npm run check`, `npm test`, `npm run build`.
+
+Both notes are in the workflow file itself. A gate that overstates itself is worse
+than no gate, and the alternative — a red CI everyone learns to ignore — is worse
+still.
 
 ---
 
@@ -853,16 +1042,21 @@ manifesto count, traversal 400. It is removed after each run (not committed).
 - **Host**: ThinkCentre M720q, Linux Mint, hostname `thinkcentre` (192.168.1.13),
   user `alvaro`.
 - **Service**: `streakforge.service` (systemd), `User=alvaro`,
-  `WorkingDirectory=/personal/documents/code/streakforge`,
-  `EnvironmentFile=/personal/documents/code/streakforge/.env`,
-  `ExecStart=/personal/documents/code/streakforge/streakforge-api`.
+  `WorkingDirectory=/opt/streakforge`, `EnvironmentFile=/opt/streakforge/.env`,
+  `ExecStart=/opt/streakforge/streakforge-api`. The binary and the `.env` live on
+  LOCAL disk (`/opt`), not on `/personal` (fuse.mergerfs over NFS): when the NFS
+  wedges, the kernel cannot page in a process's code pages and SIGBUS kills it
+  mid-request (three times in August). Migrations and manifestos stay on `/personal`
+  because they are read once at startup and a read error is recoverable.
 - **Ports**: backend binds `127.0.0.1:8001` (BIND_ADDR). FicHub occupies 8000
   (fichub.service, same pattern).
 - **Static**: `/var/www/streakforge` (frontend build; backend serves it directly via
   WEB_BUILD_DIR).
-- **DB**: PostgreSQL on ThinkCentre, role `streakforge` / db `streakforge`, password
-  `streakforge_prod` (dev-local is `streakforge_dev`). Note: role was created via
-  `sudo -u postgres psql` (alvaro needs a TCP password; peer auth via sudo works).
+- **DB**: PostgreSQL on ThinkCentre, role `streakforge` / db `streakforge`. The
+  password lives ONLY in `/opt/streakforge/.env` on the host and is not recorded here
+  (an earlier copy of this line carried it in plaintext). The role has CREATEDB, which
+  the restore rehearsal relies on: `restore-db.sh` drops and recreates
+  `streakforge_restore_check`.
 - **Cloudflare**: tunnel runs token-based (`cloudflared tunnel run --token-file
   /etc/cloudflared/token`); routes are configured in the Cloudflare dashboard — the
   user adds a route pointing to `http://192.168.1.13:8001`.
@@ -872,13 +1066,27 @@ manifesto count, traversal 400. It is removed after each run (not committed).
 ### 17.2 Deploy script
 
 `scripts/deploy.sh [host=thinkcentre]`:
-1. `cargo build --release`
-2. `npm run build` (web — plain; no dev-login variant exists)
-3. rsync release binary + migrations + manifestos → `$DEPLOY_DIR`;
-   rsync web/build → `/var/www/streakforge`
-4. write `.env` (prod values, placeholder SESSION_SECRET + DB password)
-5. install systemd unit (enable + restart)
-6. print verification hint
+1. `cargo build --release`, then asks cargo for its real target dir (a hardcoded
+   `backend/target` once shipped a 3-day-old binary with new migrations and a new
+   frontend, and every health check passed because the old binary served the old
+   routes happily).
+2. `npm run build`.
+3. rsync release binary → `/opt/streakforge`; migrations + manifestos →
+   `$DEPLOY_DIR`; `web/build` → `/var/www/streakforge`; **plus `backup-db.sh` and
+   `restore-db.sh`** next to the `.env` they read, so the deployed copies cannot
+   drift.
+4. rewrite the MANAGED (non-secret) settings in the remote `.env`:
+   `MIGRATIONS_DIR`, `MANIFESTOS_DIR`, and `SECURE_COOKIES=1`. Everything else —
+   `SESSION_SECRET`, `DATABASE_URL` — is preserved untouched. `SECURE_COOKIES` is
+   policy, not a secret, so it belongs here rather than with whoever set the host up;
+   setting it switches the cookie to `__Host-` and signs everyone out once (§15).
+5. assert every configured path exists on the remote, install the systemd unit.
+6. install the nightly backup cron entry — idempotently, by removing the old line
+   before adding the new one, because a deploy that stacks duplicate cron jobs is the
+   classic way a host ends up running the same backup four times a night.
+7. restart, then WAIT for the listener (a `Type=simple` restart returns before the
+   socket exists), then health-check 15 paths including `/api/today`, `/robots.txt`,
+   `/sitemap.xml`, `/og.png`, `/glossary`, `/terms` and `/log`.
 
 **Production secrets live in the Hermes profile `.env`** on the dev machine
 (`~/.hermes/profiles/coding/.env`): `STREAKFORGE_SESSION_SECRET` (random 64-hex)
@@ -962,6 +1170,31 @@ c226861 docs: clarify deploy.sh serves directly on 8001 (no nginx)
 
 Decision log (why things are the way they are):
 
+0. **2026-10-14 — the tier 1+2 pass.** Sixteen items from `docs/100_IDEAS.md`,
+   planned in `docs/plans/2026-10-14-tier-1-and-tier-2.md`. The decisions worth
+   keeping:
+   - **Notes become private for everyone, with no toggle.** Nothing in the UI ever
+     said notes were public, so an opt-in toggle would have shipped the leak switched
+     on for every existing user. The fix removes the column from the SQL function
+     rather than from the SELECT.
+   - **The score counts days, not rows.** `count(*)` was fine while a day held one
+     log; raising the waste budget to 5 made a day worth 5×. Repetition must not buy
+     rank, and the fix had to land before the boards were worth gaming.
+   - **The 24-hour board age floor is 24 hours, not a verification.** It stops casual
+     farming; a determined farmer waits a day. Saying it is a verification would be a
+     claim the site cannot back.
+   - **The waste budget stays configurable but the SITE says the number** (`daily_limit`
+     from the API), because a hardcoded "five" in the copy would drift the first time
+     an operator changed the setting.
+   - **Backups before anything else that touches the database**, and the restore was
+     REHEARSED rather than assumed: `profiles 67, habit_logs 512, lock_sessions 43`
+     restored from the live dump and compared against production.
+   - **`SECURE_COOKIES` is managed by the deploy script**, not left to the host's
+     configuration, because it is policy: without it the session cookie travels
+     without `Secure` on a site that only exists behind HTTPS.
+   - **CI's fmt and clippy steps are honest about their limits** (advisory formatting,
+     errors-only clippy) rather than being red on day one and ignored by week two.
+
 1. **Rust + Svelte, not Next.js/Supabase** — owner requirement; the original design
    doc's stack was overridden.
 2. **axum 0.8 `{capture}` routes** — `:period` syntax panics at startup in axum 0.8;
@@ -1028,6 +1261,54 @@ All of the following were actually exercised (not assumed):
 - **Push**: private repo created (id 241) at opencommit.eu/MagicZhang/streakforge;
   main pushed at c226861; private:true confirmed via API.
 
+**2026-10-14 (tier 1+2) — local gates**
+
+- **Backend**: `cargo test` → 20 lib + 48 integration passed.
+- **Frontend**: `vitest run` → 93 passed across 11 files; `svelte-check` → 0 errors,
+  0 warnings; `vite build` → built.
+- **Pinning test broken on purpose**: `days_until_decay bigint` → `integer` in a copy
+  of migration 0011 made `public_function_signatures_are_pinned` fail with the column
+  named, then the file was restored and the suite went green again. (A mutation that
+  does not compile, or that leaves a stale binary serving, proves nothing — both
+  happened in the mutation attempt and both were caught before reporting.)
+- **Two existing tests caught regressions in this work**: the rewritten
+  `activity_feed()` had dropped `kind = 'habit'` (rewritten from memory instead of
+  from 0003, so drill reps leaked into the feed), and five leaderboard fixtures were
+  excluded by the new 24-hour age floor. Both fixed at the source.
+
+**2026-10-14 (tier 1+2) — production, `streakforge.polarisocial.xyz`**
+
+- **Deploy**: `scripts/deploy.sh` → 15/15 health checks 200 (including `/api/today`,
+  `/robots.txt`, `/sitemap.xml`, `/og.png`, `/glossary`, `/terms`, `/log`); the
+  nightly cron entry installed and shown idempotent.
+- **Cookie (item 02)**: registration returns
+  `__Host-streakforge_session=…; HttpOnly; SameSite=Lax; Secure; Path=/;
+  Max-Age=2592000`, and `/api/auth/me` accepts it.
+- **The leak is closed (item 01)**: `/api/feed` returns 50 items with NO `note` key,
+  while 512 notes remain in Postgres — the absence is a fix, not an empty table.
+  `/api/stats` still returns the caller's own logs (with their notes).
+- **`/api/today` (item 10)**: the endpoint returned `2|3|5` and a direct
+  `select … from habit_logs … log_date = today (UTC)` returned `2|3|5`.
+- **Login throttle (item 06)**: five bad logins → 401 each; the sixth → **429** with
+  `Retry-After: 899`; the CORRECT password for that username was then also refused
+  (429), while a different username from the same address signed in (200).
+- **Ops endpoints (items 04, 07)**: `/robots.txt` 200 text/plain and names the
+  sitemap; `/sitemap.xml` 200 text/xml; `/og.png` 200 image/png and a real 1200×630
+  PNG; the served HTML carries the og/twitter tags.
+- **Backup + restore rehearsal (item 03)**: run twice on the host, the second time
+  after migration 0011 — `streakforge-2026-10-14.dump`, 72 KB, restored into
+  `streakforge_restore_check` with `profiles 67, habit_logs 512, lock_sessions 43,
+  notes 512, migrations 11`, live = restored.
+- **Browser, real DOM (items 01, 08, 10, 12, 14)**: the 18+ overlay renders and
+  disappears on accept (localStorage marker + cookie); the landing page has no
+  "CONFESSION FEED" heading, no rendered notes and a live line reading
+  "2 denials today · 2 loads wasted · 4 whitebois logged in"; `/glossary` renders all
+  17 terms with their enforcement points and only links to routes that exist;
+  `/terms` has all four sections including the admission that nothing server-side
+  enforces the age notice; `/log?kind=denial&note=…` shows the denial, the note, and
+  a signed-out link to `/login?next=/log?kind=denial…`; `/log?kind=banana` warns
+  "not recognised" and falls back to a waste.
+
 ---
 
 ## 22. Known Issues & Gotchas
@@ -1060,9 +1341,17 @@ All of the following were actually exercised (not assumed):
 
 ## 23. Roadmap & Out of Scope
 
+Shipped since the first draft of this section, in case an older note is still lying
+around: the Cloudflare route is live (`streakforge.polarisocial.xyz`), the session key
+is derived deterministically from `SESSION_SECRET` (055-style fix, so a restart no
+longer signs anyone out), `SECURE_COOKIES=1` is set by the deploy script, the daily
+waste budget is configurable, and tier 1 + tier 2 of `docs/100_IDEAS.md` are in
+production.
+
 In scope for future iterations (owner-driven):
-- Cloudflare route for the tunnel (dashboard, not code).
-- HTTPS termination (SECURE_COOKIES=1) behind the tunnel.
+- **Tier 3+ of `docs/100_IDEAS.md`** — everything scoring under 2.5, unranked here.
+- A self-service export/delete for the account (the terms promise both on request;
+  today that is a manual operation).
 - Possibly multiple habit types (schema is `kind`-extensible; add values to the check
   constraint).
 
@@ -1182,14 +1471,27 @@ Frontend deps (package.json): `svelte ^5`, `@sveltejs/kit ^2`, `@sveltejs/adapte
 
 ## 27. Future Work & Owner Notes
 
-- Add the Cloudflare tunnel route in the dashboard: hostname → `http://192.168.1.13:8001`.
-- Apply the session-key fix (Section 25) if restart-logout becomes annoying.
-- Consider `SECURE_COOKIES=1` once behind HTTPS.
+- **The Cloudflare route, the session-key fix and `SECURE_COOKIES=1` are all DONE**
+  (2026-10-14). They sat in this list long after shipping, which is the cost of a
+  notes section nobody prunes; treat the rest of this list the same way and check
+  before assuming.
+- **Backups are a dump on one disk.** `~/backups/streakforge` on the ThinkCentre
+  survives a bad migration, a mistaken delete and a corrupt table, and does NOT
+  survive losing the machine. Off-host copies (a second host, or an encrypted object
+  store) are the obvious next step and are deliberately not done yet.
+- **The restore rehearsal is manual.** `scripts/restore-db.sh` proves a dump is
+  restorable when a human runs it. Making that a monthly cron job with a one-line
+  result would turn "we have backups" into "the last backup restored".
+- **Login throttling is per username and per address, in a table.** It stops guessing;
+  it does not stop a botnet with one attempt per address. Turnstile or a second
+  challenge on login is the next step if registrations ever get abused.
 - The `kind` check constraint is extensible: adding a new habit type = new migration
   with `ALTER TABLE ... DROP CONSTRAINT ... ADD CONSTRAINT ... check (kind in (...))`
   plus a kind-filtered community query if it should stay private.
-- If bot registrations ever become a problem, the form-timing + nonce challenge can
-  be tightened (e.g. longer timing window, per-IP rate limits on /auth/nonce).
+- **The `racism_penalty` component has no data source and is always 0.** It is in the
+  score formula, in the API and in the docs; either wire a reporting path or remove it
+  from the formula, but leaving a term that can never be anything but zero invites
+  someone to "fix" it wrongly.
 
 ---
 
