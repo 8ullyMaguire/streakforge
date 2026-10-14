@@ -155,6 +155,10 @@
   form timing + an empty honeypot (SPEC §9). Any scripted probe must reproduce all
   three, including for FAILED login attempts.
 - `i64::div_ceil` is not available on this toolchain — use `(a + b - 1) / b`.
+- `habit_logs.log_date` is a GENERATED column (`generated always as ((logged_at at time zone
+  'UTC')::date) stored`). Backdating a log means updating `logged_at`; setting `log_date`
+  fails with `column "log_date" can only be updated to DEFAULT`. Anything that mocks a past
+  day (a decay probe, a fixture) moves `logged_at` and lets the day follow.
 - Behind the tunnel, the client IP comes from `CF-Connecting-IP` / `X-Forwarded-For`;
   the socket address is always loopback.
 
