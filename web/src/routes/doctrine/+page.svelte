@@ -2,6 +2,7 @@
 	import { api } from '$lib/api';
 	import type { ManifestoDoc } from '$lib/types';
 	import { renderMarkdown } from '$lib/markdown';
+	import { Heart } from 'lucide-svelte';
 	import { onMount } from 'svelte';
 
 	let docs = $state<ManifestoDoc[]>([]);
@@ -88,12 +89,55 @@
 						Select a text from the list.
 					</div>
 				{/if}
+
+				<!-- Support ask, at the foot of the text. Placed here rather than in a
+				     modal or a one-shot banner: the doctrine is what people came for, and
+				     finishing a text is the moment the ask reads as an offer rather than a
+				     toll. Rendered in every state below the list, so it survives a doc
+				     that fails to load. -->
+				<section class="card support">
+					<h2>KEEP THE FORGE LIT</h2>
+					<p>
+						StreakForge is one person's project — no ads, no sponsors, no upsell. The
+						server, the backups and the texts are paid for out of pocket, and the drills
+						stay free for everyone. If the doctrine is doing its work on you, put
+						something back.
+					</p>
+					<a
+						class="btn btn-red"
+						href="https://liberapay.com/Critical_Nexus/"
+						target="_blank"
+						rel="noopener"
+					>
+						<Heart size={16} fill="currentColor" /> SUPPORT ON LIBERAPAY
+					</a>
+				</section>
 			</div>
 		</div>
 	{/if}
 </div>
 
 <style>
+	.support {
+		margin-top: 20px;
+		border-left: 3px solid var(--red);
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 12px;
+	}
+	.support h2 {
+		font-size: 16px;
+		letter-spacing: 0.06em;
+		margin: 0;
+		color: var(--gold);
+	}
+	.support p {
+		margin: 0;
+		color: var(--text-dim);
+		font-size: 14px;
+		line-height: 1.6;
+	}
 	.doc-link:hover {
 		background: rgba(255, 255, 255, 0.06);
 		color: var(--text);

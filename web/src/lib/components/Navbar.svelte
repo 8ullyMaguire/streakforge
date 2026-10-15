@@ -3,7 +3,7 @@
 	import { api, ApiRequestError } from '$lib/api';
 	import type { SessionUser } from '$lib/types';
 	import { pushToast } from '$lib/toasts.svelte';
-	import { Flame, Lock } from 'lucide-svelte';
+	import { Flame, Heart, Lock } from 'lucide-svelte';
 
 	let user = $state<SessionUser | null>(null);
 	let locked = $state(false);
@@ -85,6 +85,20 @@
 			{/each}
 		</div>
 		<div class="nav-spacer"></div>
+		<!-- Support link. Deliberately OUTSIDE .nav-links: that block is
+		     display:none below 720px, and a support ask that vanishes on phones is
+		     the one place it should not be. Icon-only, so it costs no width next to
+		     the sign-in button; the title/aria-label carry the meaning instead. -->
+		<a
+			class="nav-heart"
+			href="https://liberapay.com/Critical_Nexus/"
+			target="_blank"
+			rel="noopener"
+			title="Support StreakForge on Liberapay"
+			aria-label="Support StreakForge on Liberapay"
+		>
+			<Heart size={18} fill="currentColor" />
+		</a>
 		{#if user}
 			{#if locked}
 				<a href="/denial" class="nav-lock-badge" title="You are locked">🔒</a>
@@ -105,6 +119,17 @@
 -->
 
 <style>
+	.nav-heart {
+		display: inline-flex;
+		align-items: center;
+		color: var(--red);
+		opacity: 0.7;
+		transition: opacity 0.15s, transform 0.06s;
+	}
+	.nav-heart:hover {
+		opacity: 1;
+		transform: scale(1.1);
+	}
 	.nav-lock-badge {
 		margin-right: 8px;
 		font-size: 15px;
