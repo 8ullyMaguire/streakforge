@@ -63,10 +63,6 @@
    `(WLW + WLD + game bonus) × multiplier`, a 30-day decay rule, a lifetime
    record that does not decay, and the `/kpi` page. (The multiplier's basis is the
    daily-participation streak since `0012`, below.)
-9. **The multiplier follows participation, not one kind's run** (2026-10-15, `0012`) — the
-   exclusive streak keeps its meaning (and may reset when the kind changes); the multiplier is
-   read off `user_participation_streak`: consecutive UTC days with a log of ANY kind, drills
-   included. Alternating waste/denial daily now keeps the tier instead of dropping to 1.0.
 8. **Sessions, budget & the ranked 100** (2026-10-14) — the signing key derived from
    `SESSION_SECRET` (restart-logout fixed), `WLW_DAILY_LIMIT=5`, `docs/100_IDEAS.md`
    filed to the public Concord project, all 16 ideas scoring ≥ 2.5 shipped
@@ -74,6 +70,10 @@
    `__Host-` cookie, nightly backups + rehearsal, CI, login throttle, og/twitter cards,
    18+ notice + `/terms`, `/glossary`, `/api/today`, `/log?kind=` deep links, budget +
    reset clock. Plan: `docs/plans/2026-10-14-tier-1-and-tier-2.md`.
+9. **The multiplier follows participation, not one kind's run** (2026-10-15, `0012`) — the
+   exclusive streak keeps its meaning (and may reset when the kind changes); the multiplier is
+   read off `user_participation_streak`: consecutive UTC days with a log of ANY kind, drills
+   included. Alternating waste/denial daily now keeps the tier instead of dropping to 1.0.
 
 ---
 
