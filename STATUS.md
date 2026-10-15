@@ -1,5 +1,29 @@
 # StreakForge — Development Status
 
+## 2026-10-15 — the streak edge-case table, and the `pub` day function it proved wrong
+
+The 2026-10-04 ranking's verification ask for this project was "add an edge-case table for
+streak calculation (timezones, DST, grace periods)". `backend/tests/streak_edge_cases.rs`
+(commit `3b8bec5`) is that table: 7 tests, **83 → 90 green** (22 unit + 51 integration +
+10 routes + 7 edge-case), mutation gate **8 killed / 0 survived / 0 not-tested**.
+
+It found a real defect on the way: `next_utc_midnight(now)` documented "Next UTC midnight"
+but took `now.date()` — the date on the **caller's** clock — so a non-UTC caller got a
+midnight a day wrong (a +02 caller at 01:30 on the 15th, i.e. 23:30 UTC on the 14th, got the
+16th's). Latent only because every call site passes `now_utc()`. It now converts to UTC first,
+and the non-UTC case is pinned. The table's most valuable row is not a date but the fixture
+that makes the timezone property testable: 00:30 and 23:30 UTC are ONE day for a +02 member
+whose local clock reads them as two.
+
+Also recorded rather than left to be rediscovered: the repo is **not** `cargo fmt`/clippy
+clean at HEAD, and this pass did not change that. `cargo fmt --check` wants the same 7 files
+formatted before and after (the new file is clean on its own) and `clippy -D warnings`
+reports 5 lib errors — `api.rs:300` a derivable `impl Default`, three very-complex types,
+`auth.rs:399` a manual `!RangeInclusive::contains`. Because `-D warnings` makes clippy abort
+at the lib it never reached the new file, so that file was linted separately:
+`cargo clippy --test streak_edge_cases --no-deps` → exit 0, zero lints. Clearing the debt is
+a separate, mechanical pass.
+
 ## 2026-10-14 (late) — the third reading: four clauses that were never shipped
 
 The plan's scope is sixteen items and all sixteen are marked shipped. This pass read the
