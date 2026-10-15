@@ -181,7 +181,7 @@
 			</table>
 		</div>
 		<p style="color:var(--text-dim);font-size:12px;margin-top:10px;text-align:center;">
-			Score = (WLW + WLD + Game Bonus) × streak multiplier. The board rewards
+			Score = (WLW + WLD + Game Bonus) × multiplier, which follows days of participation. The board rewards
 			<span style="color:var(--text);">devotion</span>, not volume.
 		</p>
 	{/if}

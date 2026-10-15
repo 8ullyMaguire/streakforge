@@ -417,6 +417,35 @@ Verified cases:
 - 3 consecutive days → (3, 3); adding a gap day 5-ago → still (3, 3)
 - past 7-day run (days 5..11 ago) + current 3-day run → current=3, longest=7
 
+### 7.1b Participation streak -- the multiplier's basis
+
+A second, kind-agnostic streak: consecutive UTC days with at least one log of **any**
+kind (waste, denial, or drill). Same gaps-and-islands shape and same
+today-or-yesterday rule as 7.1; `user_participation_streak(p_user)` in migration 0012.
+
+The two streaks answer different questions and both are kept:
+
+```
+exclusive streak      how long have I been doing THIS ONE THING?   resets if you change kind
+participation streak  how many days in a row have I shown up?     resets if you miss a day
+```
+
+**The multiplier is read off the participation streak.** Changing what you do each day
+never costs it; missing a day does. Rationale: a member who alternated waste and denial
+daily for eight days had eight days of presence and was earning 1.0x -- the same as a
+member with no unbroken run -- because the multiplier keyed on the kind she last logged.
+Measured before the change (8 days present in every case):
+
+```
+alternating waste/denial   -> exclusive streak 1, multiplier 1.0   (now 1.25)
+waste daily + one drill    -> exclusive streak 3, multiplier 1.0   (now 1.25)
+7 days present, 2-day gap  -> exclusive streak 0, multiplier 1.0   (stays 1.0)
+```
+
+Monotonic by construction: the participation streak counts a superset of the days any
+per-kind streak counts, with the same "today may still be empty" rule, so no multiplier
+falls on deploy and nobody loses score to this change.
+
 ### 7.2 Leaderboard ranking
 
 **The boards are the Whiteboi Devotion Index, not a log count.** (The old scheme —
@@ -429,7 +458,9 @@ devotion_leaderboard(p_interval, p_limit)
   wlw   = count(distinct log_date) filter (kind = 'habit')
   wld   = count(distinct log_date) filter (kind = 'denial')
   bonus = floor(count(*) filter (kind = 'affirmation') / 3)
-  multiplier = 1.0 (<7d) | 1.25 (7-13) | 1.5 (14-29) | 2.0 (30+), by the active streak
+  multiplier = the tier table, read off the PARTICIPATION streak (7.1b):
+               1.0 (<7d) | 1.25 (7-13) | 1.5 (14-29) | 2.0 (30-59) | 2.5 (60-99) | 3.0 (100+)
+               -- NOT the exclusive streak: that one may reset when the kind changes
   where score > 0
     and p.created_at <= now() - interval '24 hours'      -- sybil floor
   order by score desc, last_log_at asc nulls last

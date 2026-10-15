@@ -162,14 +162,14 @@
 					<b>Score = ((WLW + WLD + Game Bonus) × Score Multiplier) − Racism Penalty</b>
 				</p>
 				<p style="margin:0 0 8px;font-size:12px;color:var(--text-dim);">
-					WLWs and WLDs are mutually exclusive — recording one breaks the other's streak. The
-					multiplier comes from your active exclusive streak. Submit once a day (UTC) to grow
-					it; miss a day and it resets.
+					WLWs and WLDs are mutually exclusive — recording one breaks the other's exclusive
+					streak. The multiplier is not that streak: it follows days of showing up, any kind,
+					drills included. Submit once a day (UTC) to grow it; miss a day and it resets.
 				</p>
 				<table style="width:100%;font-size:12px;border-collapse:collapse;">
 					<thead>
 						<tr style="color:var(--text-dim);text-align:left;">
-							<th style="padding:3px 0;">STREAK</th>
+							<th style="padding:3px 0;">DAYS SHOWING UP</th>
 							<th style="padding:3px 0;">MULTIPLIER</th>
 						</tr>
 					</thead>

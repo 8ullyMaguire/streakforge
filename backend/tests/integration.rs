@@ -1191,8 +1191,154 @@ async fn devotion_index_streak_resets_after_a_missed_day(pool: PgPool) {
 
     assert_eq!(wlw, 3, "three WLWs in the window");
     assert!((multiplier - 1.0).abs() < 1e-9, "multiplier={multiplier}");
-    // 3 logs x 1.0 = 3: the multiplier follows the ACTIVE streak, not the total.
+    // 3 logs x 1.0 = 3. Days 0 and 1 are consecutive, so presence is 2 days -- short
+    // of the 7-day tier. Since 0012 the multiplier follows the PARTICIPATION streak
+    // (every kind counts), so what costs it here is the missed day, not the total.
     assert!((score - 3.0).abs() < 1e-9, "score={score}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn multiplier_survives_alternating_waste_and_denial(pool: PgPool) {
+    // The reported case: eight consecutive UTC days, alternating a waste and a
+    // denial. The EXCLUSIVE streak resets on every change of kind (it is a run of
+    // one thing); the MULTIPLIER must not, because she showed up every day.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('dev_alt') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for g in 0..8 {
+        let kind = if g % 2 == 0 { "habit" } else { "denial" };
+        log_on_day(&pool, uid, kind, g).await;
+    }
+
+    let (active_kind, streak, multiplier): (String, i64, f64) = sqlx::query_as(
+        "select active_kind::text, streak::bigint, multiplier::float8
+         from exclusive_streak($1)",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert!(
+        active_kind == "habit" || active_kind == "denial",
+        "active_kind={active_kind}"
+    );
+    assert_eq!(streak, 1, "the exclusive streak DOES reset on a kind change");
+    assert!(
+        (multiplier - 1.25).abs() < 1e-9,
+        "eight days of showing up must earn 1.25 even when the kind alternates; got {multiplier}"
+    );
+
+    // And the number that actually scores: 4 WLW days + 4 WLD days = 8 x 1.25 = 10.
+    let (wlw, wld, score, mul): (i64, i64, f64, f64) = sqlx::query_as(
+        "select wlw::bigint, wld::bigint, score::float8, multiplier::float8
+         from devotion_index($1, now() - interval '30 days')",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((wlw, wld), (4, 4), "four days of each kind");
+    assert!((mul - 1.25).abs() < 1e-9, "scored multiplier={mul}");
+    assert!((score - 10.0).abs() < 1e-9, "score={score}");
+
+    // The new reading, directly.
+    let (cur, longest): (i64, i64) =
+        sqlx::query_as("select current_streak::bigint, longest_streak::bigint from user_participation_streak($1)")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((cur, longest), (8, 8), "eight days of presence");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_drill_day_counts_as_a_day_of_participation(pool: PgPool) {
+    // Eight days of waste with one drill (affirmation) in the middle. The drill ends
+    // the exclusive streak's run -- affinities hold no streak -- but the day still
+    // counts as showing up, so the multiplier keeps the 7-day tier.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('dev_drill') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for g in 0..8 {
+        let kind = if g == 3 { "affirmation" } else { "habit" };
+        log_on_day(&pool, uid, kind, g).await;
+    }
+
+    let (streak, multiplier): (i64, f64) = sqlx::query_as(
+        "select streak::bigint, multiplier::float8 from exclusive_streak($1)",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Today, yesterday and the day before are waste; the drill day interrupts it.
+    assert_eq!(streak, 3, "the drill day interrupts the exclusive streak");
+    assert!(
+        (multiplier - 1.25).abs() < 1e-9,
+        "a drill day still counts as participation; got {multiplier}"
+    );
+
+    // 7 WLW days x 1.25 = 8.75 (the drill is 1 rep: no bonus yet).
+    let (wlw, game_bonus, score): (i64, i64, f64) = sqlx::query_as(
+        "select wlw::bigint, game_bonus::bigint, score::float8
+         from devotion_index($1, now() - interval '30 days')",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((wlw, game_bonus), (7, 0));
+    assert!((score - 8.75).abs() < 1e-9, "score={score}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn participation_must_be_every_day_not_most_days(pool: PgPool) {
+    // The boundary the change must NOT move: presence counts consecutive days, not
+    // days-present. Three days ending today plus a five-day run further back is
+    // eight days present and still 1.0x.
+    let uid = sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ('dev_gap') returning id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for g in [0, 1, 2, 5, 6, 7, 8, 9] {
+        log_on_day(&pool, uid, "habit", g).await;
+    }
+
+    let (cur, longest): (i64, i64) =
+        sqlx::query_as("select current_streak::bigint, longest_streak::bigint from user_participation_streak($1)")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((cur, longest), (3, 5), "current run 3, longest run 5");
+
+    let (wlw, multiplier, score): (i64, f64, f64) = sqlx::query_as(
+        "select wlw::bigint, multiplier::float8, score::float8
+         from devotion_index($1, now() - interval '30 days')",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(wlw, 8, "eight days present in the window");
+    assert!(
+        (multiplier - 1.0).abs() < 1e-9,
+        "eight days present with a two-day gap is not a run; got {multiplier}"
+    );
+    assert!((score - 8.0).abs() < 1e-9, "score={score}");
 }
 
 #[sqlx::test(migrations = "./migrations")]

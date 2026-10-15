@@ -47,13 +47,13 @@ export const TERMS: GlossaryTerm[] = [
 	{
 		term: 'Multiplier',
 		definition:
-			'Earned by the active streak: 1–6 days ×1.0, 7–13 ×1.25, 14–29 ×1.5, 30–59 ×2.0. This is why consistency beats volume.',
-		enforced: 'devotion_multiplier(p_streak)'
+			'Earned by consecutive days of showing up — any kind, drills included: 1–6 days ×1.0, 7–13 ×1.25, 14–29 ×1.5, 30–59 ×2.0, 60–99 ×2.5, 100+ ×3.0. Changing what you do each day never costs it; missing a day does. This is why consistency beats volume.',
+		enforced: 'devotion_multiplier(user_participation_streak(p_user))'
 	},
 	{
 		term: 'Active streak',
 		definition:
-			'Consecutive UTC days of the kind you logged most recently — a waste or a denial. Drill reps never hold a streak.',
+			'Consecutive UTC days of the kind you logged most recently — a waste or a denial. Drill reps never hold one. This streak resets when you switch kind; the multiplier does not.',
 		enforced: 'exclusive_streak(p_user)'
 	},
 	{
@@ -89,7 +89,7 @@ export const TERMS: GlossaryTerm[] = [
 	{
 		term: 'Drill',
 		definition:
-			'The affirmation reps. An exercise, with its own daily allowance, that feeds the game bonus and never the streak.',
+			'The affirmation reps. An exercise, with its own daily allowance, that feeds the game bonus and never the exclusive streak — but a drill day still counts as a day of showing up for the multiplier.',
 		enforced: 'kind = \'affirmation\'; DAILY_LIMIT'
 	},
 	{
