@@ -313,8 +313,17 @@ pub fn parse_kind(s: Option<&str>) -> LogKind {
 
 /// Next UTC midnight — the boundary the daily cadence resets on.
 /// Countdowns are computed against this so the UI and the server agree.
+///
+/// The date is taken in UTC, not in the caller's offset: `now.date()` is the date
+/// on the CALLER's clock, so a +02 caller at 01:30 on the 15th (23:30 UTC on the
+/// 14th) would get the 16th's midnight — a day late, and a disagreement with the
+/// SQL scanners, which bucket strictly by UTC. Every caller passes `now_utc()`
+/// today, which is why the difference was latent; the offset conversion makes the
+/// promise in this doc true for any input.
 pub fn next_utc_midnight(now: OffsetDateTime) -> OffsetDateTime {
-    (now.date() + time::Duration::days(1)).midnight().assume_utc()
+    (now.to_offset(time::UtcOffset::UTC).date() + time::Duration::days(1))
+        .midnight()
+        .assume_utc()
 }
 
 /// Enforce the daily (UTC) cadence. `pub` so integration tests can assert the
