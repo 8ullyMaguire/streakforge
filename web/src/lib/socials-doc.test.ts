@@ -129,12 +129,19 @@ describe('manifestos/09_socials.md, rendered', () => {
 		// Listing a dead or misrouted site as if it worked is the one thing this doc must not
 		// do. Each of these was measured, both when the list was first written and again after
 		// the routing was fixed on 2026-10-15:
-		//   leftist    -> 502; nothing is deployed on that port, and the entry must keep saying so
+		//   leftist    -> was 502 (the generator was down), answers 200 now: the project is
+		//                 `feedgen`, a user systemd unit on thinkcentre serving ten hand-built
+		//                 Bluesky feeds. The entry described it as absent, and that was wrong.
 		//   gravity    -> its DNS record is published; the doc must no longer claim otherwise
 		//   icecast    -> serves Icecast (status-json.xsl answers); no stream behind it yet
 		//   castopod   -> serves the Castopod installer; no longer an apology for a misroute
 		const text = html.replace(/<[^>]+>/g, ' ');
-		expect(text).toMatch(/leftist[\s\S]{0,200}not up yet/i);
+		expect(text, 'leftist answers now, and the doc must say what it is').toMatch(
+			/leftist[\s\S]{0,240}feeds/i
+		);
+		expect(text, 'the doc must not still say leftist is down').not.toMatch(
+			/leftist[\s\S]{0,200}not up yet/i
+		);
 		expect(text, 'gravity answers at its own name now').toMatch(/gravity[\s\S]{0,240}answers at\s+its own address/i);
 		expect(text, 'the doc must not still say gravity has no DNS record').not.toMatch(
 			/gravity[\s\S]{0,240}no DNS record/i

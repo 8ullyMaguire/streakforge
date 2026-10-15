@@ -27,8 +27,8 @@ Everything on this list is mine. One line each, and the honest state of it: not 
   hostname; nobody is broadcasting on it yet, so there is no music to play.
 - **the forge** — https://git.polarisocial.xyz — repos, issues, mirrors. My own git, not
   somebody else's.
-- **leftist** — https://leftist.polarisocial.xyz — not up yet. Nothing answers on that
-  hostname, so the entry is the intention, not a working link.
+- **leftist** — https://leftist.polarisocial.xyz — the feeds: ten hand-made Bluesky feeds over the
+  Leftist list, chosen by hand rather than by an algorithm. The landing page is up.
 - **castopod** — https://castopod.polarisocial.xyz — podcast hosting, now up: it is installed and
   waiting for its first show.
 
