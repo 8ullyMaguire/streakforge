@@ -7,8 +7,8 @@ Everything on this list is mine. One line each, and the honest state of it: not 
 - **WhiteBois** — https://whitebois.polarisocial.xyz — a community for the obsessive.
 - **BlackRep** — https://blackrep.polarisocial.xyz — verified encounters, and the reputation
   that comes from them.
-- **GRAVITY** — the federated social instance. Its own address, gravity.polarisocial.xyz, has
-  no DNS record yet, so for now it answers at https://icecast.polarisocial.xyz.
+- **GRAVITY** — https://gravity.polarisocial.xyz — the federated social instance. It answers at
+  its own address now: the DNS record it had been missing is published.
 - **Concord** — https://concord.polarisocial.xyz — the consensus forge. Every other site here
   takes work through it; see below.
 - **Lorehaven** — https://lorehaven.polarisocial.xyz — a welcoming home for fanfiction: read,
@@ -23,14 +23,14 @@ Everything on this list is mine. One line each, and the honest state of it: not 
 - **BNWO feed** — https://bnwo-feed.polarisocial.xyz — the custom feeds.
 - **news08** — https://news.polarisocial.xyz — the news desk, and the broadcasts that go with
   it.
-- **icecast** — https://icecast.polarisocial.xyz — the radio, when there is one. That
-  hostname resolves, but it currently serves the GRAVITY app; no stream is running behind it.
+- **icecast** — https://icecast.polarisocial.xyz — the radio. The stream server is up on that
+  hostname; nobody is broadcasting on it yet, so there is no music to play.
 - **the forge** — https://git.polarisocial.xyz — repos, issues, mirrors. My own git, not
   somebody else's.
 - **leftist** — https://leftist.polarisocial.xyz — not up yet. Nothing answers on that
   hostname, so the entry is the intention, not a working link.
-- **castopod** — https://castopod.polarisocial.xyz — podcast hosting, also not up yet. Right
-  now that hostname serves the WhiteBois app, which is a routing mistake rather than a site.
+- **castopod** — https://castopod.polarisocial.xyz — podcast hosting, now up: it is installed and
+  waiting for its first show.
 
 ## Want anything changed? Ask the forge.
 

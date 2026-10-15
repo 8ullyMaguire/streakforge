@@ -19,11 +19,10 @@ const DOC = resolve(process.cwd(), '../manifestos/09_socials.md');
 const src = readFileSync(DOC, 'utf8');
 const html = renderMarkdown(src);
 
-/// Every site the owner listed, by hostname. Two of them are named but NOT linked, because
-/// linking them would be a lie the reader pays for: gravity.polarisocial.xyz has no DNS record
-/// (NXDOMAIN, checked against Cloudflare's resolver) and leftist.polarisocial.xyz answers 502.
-/// Both are still NAMED -- the owner asked for the list of their sites, and the intention is
-/// part of that -- which is why completeness is asserted on the text and linking separately.
+/// Every site the owner listed, by hostname. All sixteen resolve and are linked: gravity's
+/// missing DNS record was published on 2026-10-15. leftist.polarisocial.xyz is linked too, and
+/// its own entry says the site is not up yet -- the hostname resolves, the app does not exist,
+/// so the entry is honest rather than the link absent.
 const SITES = [
 	'streakforge.polarisocial.xyz',
 	'whitebois.polarisocial.xyz',
@@ -46,12 +45,10 @@ const SITES = [
 /** Every href in the rendered doc, in order. */
 const hrefs = (): string[] => [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
 
-/// The one host with no DNS record at all. leftist is NOT in this group: its hostname
-/// resolves and the entry says the site is not up yet, so its link is a real address that will
-/// work when the app lands. gravity.polarisocial.xyz is NXDOMAIN -- linking that is a dead
-/// letter, so the entry names it as text instead.
-const UNRESOLVING = 'gravity.polarisocial.xyz';
-const LIVE_SITES = SITES.filter((h) => h !== UNRESOLVING);
+/// Every site is linkable now, so the completeness and linking assertions run over the whole
+/// list. This used to carve out gravity.polarisocial.xyz (NXDOMAIN). The carve-out is gone
+/// rather than emptied: a list that quietly excludes a host is how a dead link ships.
+const LIVE_SITES = SITES;
 
 describe('manifestos/09_socials.md, rendered', () => {
 	it('names every site in the network', () => {
@@ -72,12 +69,11 @@ describe('manifestos/09_socials.md, rendered', () => {
 		for (const h of LIVE_SITES) {
 			expect(all, `${h} must be an href, not just text`).toContain(`https://${h}`);
 		}
-		// Named, deliberately NOT linked, and the entry says why. Linking a host
-		// that does not answer is the failure this whole test file exists to stop.
-		for (const h of [UNRESOLVING]) {
-			expect(html, `${h} must still be named`).toContain(h);
-			expect(all, `${h} has no DNS record, so it must not be a link`).not.toContain(`https://${h}`);
-		}
+		// And the host that used to be the exception is asserted like the rest, so a
+		// regression that un-publishes its record shows up as a missing href.
+		expect(all, 'gravity.polarisocial.xyz resolves now, so it must be a link').toContain(
+			'https://gravity.polarisocial.xyz'
+		);
 	});
 
 	it('links the Concord project with nothing stray inside the href', () => {
@@ -129,15 +125,27 @@ describe('manifestos/09_socials.md, rendered', () => {
 		expect([...html.matchAll(/<li>/g)].length).toBeGreaterThanOrEqual(30);
 	});
 
-	it('is honest about the four entries that are not what they say', () => {
+	it('is honest about the four entries that were not what they said', () => {
 		// Listing a dead or misrouted site as if it worked is the one thing this doc must not
-		// do. Each of these was measured: leftist answers 502, castopod serves the WhiteBois
-		// app, gravity.polarisocial.xyz is NXDOMAIN, and icecast.polarisocial.xyz serves the
-		// GRAVITY app rather than a stream.
+		// do. Each of these was measured, both when the list was first written and again after
+		// the routing was fixed on 2026-10-15:
+		//   leftist    -> 502; nothing is deployed on that port, and the entry must keep saying so
+		//   gravity    -> its DNS record is published; the doc must no longer claim otherwise
+		//   icecast    -> serves Icecast (status-json.xsl answers); no stream behind it yet
+		//   castopod   -> serves the Castopod installer; no longer an apology for a misroute
 		const text = html.replace(/<[^>]+>/g, ' ');
 		expect(text).toMatch(/leftist[\s\S]{0,200}not up yet/i);
-		expect(text).toMatch(/castopod[\s\S]{0,200}not up yet/i);
-		expect(text).toMatch(/gravity[\s\S]{0,240}no DNS record/i);
-		expect(text).toMatch(/icecast[\s\S]{0,240}serves the GRAVITY app/i);
+		expect(text, 'gravity answers at its own name now').toMatch(/gravity[\s\S]{0,240}answers at\s+its own address/i);
+		expect(text, 'the doc must not still say gravity has no DNS record').not.toMatch(
+			/gravity[\s\S]{0,240}no DNS record/i
+		);
+		expect(text, 'icecast is the stream server now').toMatch(/icecast[\s\S]{0,240}stream server is up/i);
+		expect(text, 'the doc must not still say icecast serves GRAVITY').not.toMatch(
+			/icecast[\s\S]{0,240}serves the GRAVITY app/i
+		);
+		expect(text, 'castopod is installed now').toMatch(/castopod[\s\S]{0,240}waiting for its first show/i);
+		expect(text, 'the doc must not still call the castopod misroute a site').not.toMatch(
+			/castopod[\s\S]{0,240}WhiteBois app/i
+		);
 	});
 });
