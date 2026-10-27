@@ -10,6 +10,7 @@
 
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::http::Method;
+use axum::middleware;
 use axum::response::IntoResponse;
 use axum::routing::{get, patch, post};
 use axum::Router;
@@ -82,6 +83,12 @@ pub async fn build_router(cfg: &Config, pool: PgPool) -> Result<Router, sqlx::Er
         .route("/auth/register", post(crate::auth::register))
         .route("/auth/login", post(crate::auth::login))
         .route("/auth/nonce", get(crate::auth::nonce))
+        // GS-3. `/consent` is reachable without consent by definition, and the
+        // layer below refuses every other mutating request until it is given.
+        .route(
+            "/consent",
+            get(crate::consent::get).post(crate::consent::post),
+        )
         .route("/logs", post(crate::api::log_habit))
         .route("/stats", get(crate::api::get_stats))
         .route("/drill", get(crate::api::get_drill))
@@ -101,7 +108,15 @@ pub async fn build_router(cfg: &Config, pool: PgPool) -> Result<Router, sqlx::Er
         .route("/profile", patch(crate::api::update_profile))
         .route("/doctrine", get(crate::manifesto::list))
         .route("/doctrine/{id}", get(crate::manifesto::get))
-        .route("/health", get(crate::api::health));
+        .route("/health", get(crate::api::health))
+        // Outermost layer on the API: it runs before every handler, so a route
+        // added later is gated by existing rather than by remembering to call
+        // the check. That is the failure this codebase has had before — a
+        // server-side rule enforced in each handler is a rule with holes.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::consent::require_consent,
+        ));
 
     // Serve real static files from the build root (manifest, icons, etc.)
     // BEFORE the SPA fallback, so PWA assets are served as themselves.

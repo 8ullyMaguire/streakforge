@@ -4,10 +4,13 @@
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import AgeGate from '$lib/components/AgeGate.svelte';
+	import ConsentToast from '$lib/components/ConsentToast.svelte';
 </script>
 
 <!-- Renders nothing for a visitor who has already acknowledged (item 08). -->
 <AgeGate />
+<!-- GS-3: renders nothing once consent is recorded, and never blocks a read. -->
+<ConsentToast />
 <Navbar />
 <BottomNav />
 <main>

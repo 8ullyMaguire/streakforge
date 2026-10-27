@@ -1,9 +1,11 @@
 // Library facade so integration tests can reference the crate's modules.
 pub mod api;
+pub mod audit;
 pub mod auth;
 #[cfg(test)]
 pub mod auth_tests;
 pub mod config;
+pub mod consent;
 pub mod db;
 pub mod error;
 pub mod manifesto;

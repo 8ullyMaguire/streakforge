@@ -509,6 +509,20 @@ pub async fn register(
         provider,
         social_url,
     };
+
+    // GS-3: this request reached the handler through the consent gate, so the
+    // visitor has accepted the version the site asks for — it is the account's
+    // first act. Stamping it here is what makes the record outlive the browser:
+    // the next sign-in on a device that has never been asked is not a fresh
+    // question, because the answer is already on the identity.
+    let categories = session
+        .get::<Vec<String>>(crate::consent::CATEGORIES_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    crate::consent::grant(&state, &session, &categories, Some(id)).await?;
+
     session.insert(SESSION_USER_KEY, &user).await.map_err(ApiError::from)?;
 
     Ok((axum::http::StatusCode::CREATED, Json(user)))
@@ -526,7 +540,7 @@ pub async fn login(
     session: Session,
     headers: axum::http::HeaderMap,
     Json(body): Json<AuthForm>,
-) -> ApiResult<Json<SessionUser>> {
+) -> ApiResult<axum::response::Response> {
     let username = validate_auth_form(&body)?;
     let ip = client_ip(&headers);
 
@@ -586,6 +600,24 @@ pub async fn login(
 
     clear_login_failures(&state.pool, &username).await?;
 
+    // GS-3: a session needs consent, and the account's own record is what lets a
+    // returning user sign in on a device that has never been asked. Without this
+    // the gate would be a door that relocks itself every time someone changes
+    // browser — which is the shape of a gate people work around instead.
+    if state.cfg.consent_required
+        && !crate::consent::accepted(&session, state.cfg.consent_version).await
+    {
+        let consented: Option<bool> =
+            sqlx::query_scalar("select consented_at is not null from profiles where id = $1")
+                .bind(id)
+                .fetch_optional(&state.pool)
+                .await?;
+        if consented != Some(true) {
+            return Ok(crate::consent::refusal(state.cfg.consent_version));
+        }
+        crate::consent::grant(&state, &session, &[], Some(id)).await?;
+    }
+
     let user = SessionUser {
         id,
         username: uname,
@@ -596,7 +628,7 @@ pub async fn login(
     };
     session.insert(SESSION_USER_KEY, &user).await.map_err(ApiError::from)?;
 
-    Ok(Json(user))
+    Ok(Json(user).into_response())
 }
 
 // ---- Profile helpers (registration + session refresh) ----

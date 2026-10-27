@@ -37,6 +37,10 @@ fn test_config() -> Config {
         migrations_dir: "./migrations".into(),
         session_ttl_days: 30,
         wlw_daily_limit: 5,
+        // The gate is on in these tests: the harness below accepts consent
+        // before it mutates, which is also what proves the gate is passable.
+        consent_version: 1,
+        consent_required: true,
     }
 }
 
@@ -85,7 +89,30 @@ fn auth_body(username: &str, password: &str) -> serde_json::Value {
     })
 }
 
+/// Give consent on a fresh session, the way the browser does before it submits
+/// the form: the toast is answered on the first page, not at the submit button.
+///
+/// Doing it here rather than turning the gate off in `test_config` keeps the rest
+/// of this file honest — every mutation below goes through the real layer.
+async fn consent(app: &Router) -> String {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/consent")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"accept":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "consent is recorded");
+    session_cookie(&res)
+}
+
 async fn register(app: &Router, username: &str) -> String {
+    let cookie = consent(app).await;
     let res = app
         .clone()
         .oneshot(
@@ -93,6 +120,7 @@ async fn register(app: &Router, username: &str) -> String {
                 .method("POST")
                 .uri("/api/auth/register")
                 .header("content-type", "application/json")
+                .header("cookie", &cookie)
                 .body(Body::from(
                     auth_body(username, "correct-horse-battery").to_string(),
                 ))

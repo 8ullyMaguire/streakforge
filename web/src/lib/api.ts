@@ -16,6 +16,7 @@ import type {
 	Stats,
 	UserOfTheDay
 } from './types';
+import { noteConsentRequiredFromApi } from './consent';
 
 const BASE = '/api';
 
@@ -28,8 +29,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	if (!res.ok) {
 		let msg = `Request failed (${res.status})`;
 		try {
-			const body = (await res.json()) as ApiError;
-			if (body.error) msg = body.error;
+			const body = (await res.json()) as ApiError & { consent?: string; version?: number };
+			// GS-3: the gate answers `403 {"consent":"required"}` with no prose,
+			// because the caller is meant to act on it rather than print it. One
+			// place turns that shape into a question the UI can show, so no
+			// component has to recognise it.
+			if (body.consent === 'required') {
+				noteConsentRequiredFromApi();
+				msg = 'Please choose your cookie settings first.';
+			} else if (body.error) msg = body.error;
 		} catch {
 			// non-JSON error body — keep default message
 		}

@@ -5,6 +5,8 @@ use std::env;
 pub const DEFAULT_SESSION_TTL_DAYS: i64 = 30;
 /// How many loads wasted (`kind = 'habit'`) one user may log per UTC day.
 pub const DEFAULT_WLW_DAILY_LIMIT: i64 = 5;
+/// GS-3: first version of the consent notice. Bumping it re-asks.
+pub const DEFAULT_CONSENT_VERSION: i64 = 1;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -20,6 +22,15 @@ pub struct Config {
     pub session_ttl_days: i64,
     /// Loads wasted allowed per UTC day per user. `WLW_DAILY_LIMIT`.
     pub wlw_daily_limit: i64,
+    /// GS-3: the consent version this site currently asks for. `CONSENT_VERSION`.
+    /// Bumping it re-asks every visitor whose acceptance is older, which is the
+    /// only correct response to changing what is collected.
+    pub consent_version: i32,
+    /// GS-3: whether a mutating request needs consent at all. `CONSENT_REQUIRED`
+    /// (`1`/`0`, default on). Kept switchable because turning the gate off is
+    /// how a deployment answers an incident, and needing a rebuild for that is
+    /// how a switch gets forgotten.
+    pub consent_required: bool,
 }
 
 /// Parse a bounded positive integer out of an env value.
@@ -75,6 +86,16 @@ impl Config {
                 1,
                 100,
             ),
+            consent_version: bounded_i64(
+                "CONSENT_VERSION",
+                env::var("CONSENT_VERSION").ok().as_deref(),
+                DEFAULT_CONSENT_VERSION,
+                1,
+                1000,
+            ) as i32,
+            consent_required: env::var("CONSENT_REQUIRED")
+                .map(|v| v.trim() != "0" && v.trim() != "false")
+                .unwrap_or(true),
         }
     }
 }

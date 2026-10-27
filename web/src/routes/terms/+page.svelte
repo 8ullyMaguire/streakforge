@@ -71,6 +71,25 @@
 		</p>
 	</div>
 
+	<div class="card" style="padding:18px;margin-bottom:12px;">
+		<h2 style="font-size:14px;letter-spacing:0.08em;margin:0 0 8px;">COOKIES AND CONSENT</h2>
+		<p style="font-size:14px;line-height:1.6;margin:0 0 8px;">
+			One cookie is essential: the session that keeps you signed in. It is set the
+			moment you have a session to keep, and the site does not work without it.
+			Analytics and personalisation are optional, off by default, and only turned on
+			if you tick them.
+		</p>
+		<p style="font-size:14px;line-height:1.6;margin:0;">
+			Declining is honoured: the counters stay readable, the boards stay readable,
+			and nothing is stored on your device beyond the per-tab flag that remembers you
+			said no. What you cannot do without accepting is write — post, log, or register
+			— because the API refuses that server-side, not just in the browser. Your
+			answer is recorded against your account once you have one, so signing in on
+			another device does not ask you again. Changing what is collected means a new
+			version of this notice, and a new version is a new question.
+		</p>
+	</div>
+
 	<div class="card" style="padding:18px;">
 		<h2 style="font-size:14px;letter-spacing:0.08em;margin:0 0 8px;">THE SHORT VERSION</h2>
 		<p style="font-size:14px;line-height:1.6;margin:0;">
