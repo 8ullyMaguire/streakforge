@@ -91,7 +91,7 @@ Plus `STATUS.md` for the living dev-status checklist.
 - **wlw-style theme** — near-black, red/gold accents, Inter + Roboto Mono,
   tabular green counter digits, scrolling marquee, mobile-first.
 
-## Tech Stack
+## Tech stack and language policy
 
 | Layer     | Choice                                            |
 |-----------|---------------------------------------------------|
@@ -101,6 +101,23 @@ Plus `STATUS.md` for the living dev-status checklist.
 | Database  | PostgreSQL 16, sqlx (runtime queries + migrations)|
 | Auth      | Local username/password (Argon2id) + sessions, bot-dissuasion |
 | Tests     | Rust `#[sqlx::test]` integration + Vitest          |
+
+What this repo is, in one line: a Rust axum 0.8 backend on PostgreSQL 16 with
+sqlx, and a SvelteKit (Svelte 5) front end in `web/` — the table above is the
+detail, and the two manifests are the source of truth.
+
+The estate default for new work is an axum + Postgres core, a SvelteKit front
+end, the shared design tokens for anything that draws a UI, and contracts
+between services — work-manifest v1, OpenAPI, RSS/ActivityPub — instead of a
+shared database. Services read each other's published contracts; they do not
+read each other's tables.
+
+This repo is the default: the stack above is the one to copy for a new
+service, and styling stays plain CSS over the shared CSS variables rather
+than a component framework.
+
+The rules that apply to every repo in the estate are in
+`10-Projects/estate-master-prompt.md` in the secondbrain vault.
 
 ## Repository Layout
 
