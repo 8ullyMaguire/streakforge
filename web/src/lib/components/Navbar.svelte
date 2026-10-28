@@ -113,7 +113,7 @@
 				<a
 					href="/login"
 					class="nav-link"
-					style="color:#d4af37;letter-spacing:0.08em;font-size:11px;"
+					style="color:var(--gold);letter-spacing:0.08em;font-size:11px;"
 					title="Guest identity — register to keep this history">GUEST</a
 				>
 			{/if}

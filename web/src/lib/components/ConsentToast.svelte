@@ -82,7 +82,7 @@
 		aria-live="polite"
 		aria-labelledby="consent-title"
 		class="card"
-		style="position:fixed;left:12px;right:12px;bottom:12px;z-index:55;max-width:620px;margin:0 auto;padding:16px;border-color:rgba(212,175,55,0.35);background:var(--bg, #0b0b0b);"
+		style="position:fixed;left:12px;right:12px;bottom:12px;z-index:55;max-width:620px;margin:0 auto;padding:16px;border-color:rgba(212,175,55,0.35);background:var(--bg, var(--bg));"
 	>
 		<div
 			id="consent-title"
@@ -104,7 +104,7 @@
 						type="checkbox"
 						bind:checked={chosen[category]}
 						disabled={busy}
-						style="accent-color:var(--gold, #d4af37);"
+						style="accent-color:var(--gold, var(--gold));"
 					/>
 					{category.toUpperCase()}
 				</label>
@@ -129,7 +129,7 @@
 		</div>
 
 		{#if error}
-			<div style="margin-top:8px;font-size:12px;color:#e06666;">{error}</div>
+			<div style="margin-top:8px;font-size:12px;color:var(--danger);">{error}</div>
 		{/if}
 	</div>
 {/if}

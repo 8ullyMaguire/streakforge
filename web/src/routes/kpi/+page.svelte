@@ -89,14 +89,14 @@
 				{#each data.trend as p}
 					<div class="trend-day" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:1px;height:100%;" title="{p.day} · {p.wasted} wasted {p.denied} denied {p.affirmations} affirmed">
 						<div style="height:{barPct(p.affirmations, max)};background:var(--text-dim);opacity:.5;min-height:1px;"></div>
-						<div style="height:{barPct(p.denied, max)};background:var(--green, #2ecc71);min-height:1px;"></div>
+						<div style="height:{barPct(p.denied, max)};background:var(--green, var(--green));min-height:1px;"></div>
 						<div style="height:{barPct(p.wasted, max)};background:var(--red);min-height:1px;"></div>
 					</div>
 				{/each}
 			</div>
 			<div style="display:flex;gap:16px;justify-content:center;margin-top:10px;font-size:12px;color:var(--text-dim);letter-spacing:.05em;">
 				<span><span style="color:var(--red);">■</span> wasted</span>
-				<span><span style="color:var(--green,#2ecc71);">■</span> denied</span>
+				<span><span style="color:var(--green,var(--green));">■</span> denied</span>
 				<span><span style="color:var(--text-dim);opacity:.6;">■</span> affirmations</span>
 			</div>
 		</div>

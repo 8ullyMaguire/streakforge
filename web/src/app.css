@@ -1,22 +1,29 @@
 /* App-wide CSS — dark wlw-inspired theme (StreakForge edition) */
 /* Palette mirrors wlw.grok.me: near-black, red accent, gold, digit colors. */
 
+/* estate-tokens:brand-file -- this file IS the brand layer
+   Neutral roles come from rust/commons/ui/tokens (imported below); the gold/red identity is declared here and
+   nowhere else, so a brand colour cannot scatter into components without the adoption audit noticing. */
+@import "../../../commons/ui/tokens/tokens.css";
+
 :root {
-	--bg: #0a0a0a;
-	--bg-elev: #141414;
-	--bg-card: #1a1a1a;
-	--border: #303030;
-	--text: #f0f0f0;
-	--text-dim: #a8aeb4;
+	/* aliases: StreakForge's own vocabulary mapped onto estate roles, so existing call sites keep working */
+	--bg-elev: var(--surface);
+	--bg-card: var(--surface-raised);
+	--text-dim: var(--text-muted);
+	/* brand layer */
 	--red: #e31c23;
 	--red-soft: #c41e1e;
 	--gold: #d4a017;
-	--green: #22c55e;
-	--digit-green: #22c55e;
-	--digit-red: #e31c23;
-	--digit-black: #6b7280;
-	--font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-	--font-mono: 'Roboto Mono', ui-monospace, monospace;
+	--green: var(--green);
+	--digit-green: var(--green);
+	--digit-red: var(--red);
+	--medal-gold: var(--gold);
+	--medal-silver: #c0c0c0;
+	--medal-bronze: #cd7f32;
+	--digit-black: var(--text-faint);
+	--font-sans: 'Inter', var(--font-sans);
+	--font-mono: 'Roboto Mono', var(--font-mono);
 }
 
 * {
@@ -138,7 +145,7 @@ textarea:focus {
 	color: #fff;
 }
 .btn-red:hover {
-	background: #f0242b;
+	background: var(--red);
 }
 .btn-ghost {
 	background: transparent;
@@ -298,10 +305,10 @@ textarea:focus {
 	color: var(--gold);
 }
 .rank-top2 {
-	color: #c0c0c0;
+	color: var(--medal-silver);
 }
 .rank-top3 {
-	color: #cd7f32;
+	color: var(--medal-bronze);
 }
 .board .count {
 	font-family: var(--font-mono);
@@ -379,7 +386,7 @@ textarea:focus {
 
 /* Skeleton */
 .skeleton {
-	background: linear-gradient(90deg, var(--bg-elev) 25%, #1d1d1d 50%, var(--bg-elev) 75%);
+	background: linear-gradient(90deg, var(--bg-elev) 25%, var(--surface) 50%, var(--bg-elev) 75%);
 	background-size: 200% 100%;
 	animation: shimmer 1.4s infinite;
 	border-radius: 8px;
@@ -641,7 +648,7 @@ textarea:focus {
 	display: inline-block;
 	margin-left: 6px;
 	font-size: 11px;
-	color: #22c55e;
+	color: var(--green);
 	background: rgba(34, 197, 94, 0.12);
 	border-radius: 999px;
 	padding: 1px 7px;

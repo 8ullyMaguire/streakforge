@@ -175,7 +175,7 @@
 		text-underline-offset: 2px;
 	}
 	:global(.md-body a:hover) {
-		color: #ff5257;
+		color: var(--red);
 	}
 	:global(.md-body ul) {
 		padding-left: 22px;
