@@ -15,7 +15,12 @@
 	--red: #e31c23;
 	--red-soft: #c41e1e;
 	--gold: #d4a017;
-	--green: var(--green);
+	/* `--green` used to read `var(--green)` — a self-reference, which CSS treats as invalid at
+	   computed-value time, so `var(--green)` and `var(--green, var(--green))` resolved to nothing
+	   and the "gain"/"denied" markers on /drill and /kpi rendered in the inherited text colour
+	   instead of green. The token adoption renamed the literal to itself; the estate role is what
+	   it was standing in for. */
+	--green: var(--success);
 	--digit-green: var(--green);
 	--digit-red: var(--red);
 	--medal-gold: var(--gold);
