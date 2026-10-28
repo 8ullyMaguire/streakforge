@@ -443,6 +443,8 @@ pub async fn log_habit(
     Json(body): Json<LogRequest>,
 ) -> ApiResult<(StatusCode, Json<LogResponse>)> {
     let user = require_user(&session).await?;
+    // GS-1: at the MAU cap a guest keeps reading but stops writing (§1).
+    crate::guest::guard_write(&state, &user).await?;
     let note = body.note.unwrap_or_default();
     let note = note.trim();
     if note.chars().count() > 140 {
@@ -500,6 +502,8 @@ pub async fn lock(
     session: Session,
 ) -> ApiResult<(axum::http::StatusCode, Json<LockInfoResponse>)> {
     let user = require_user(&session).await?;
+    // GS-1: at the MAU cap a guest keeps reading but stops writing (§1).
+    crate::guest::guard_write(&state, &user).await?;
     // If there's an open session already, close it first (re-lock).
     sqlx::query("update lock_sessions set unlocked_at = now() where user_id = $1 and unlocked_at is null")
         .bind(user.id)
@@ -520,6 +524,8 @@ pub async fn unlock(
     Json(body): Json<UnlockRequest>,
 ) -> ApiResult<Json<LockInfoResponse>> {
     let user = require_user(&session).await?;
+    // GS-1: at the MAU cap a guest keeps reading but stops writing (§1).
+    crate::guest::guard_write(&state, &user).await?;
     let reason = body.reason.unwrap_or_default();
     let reason = reason.trim();
     if reason.chars().count() > 60 {
@@ -1153,6 +1159,8 @@ pub async fn update_profile(
     Json(body): Json<UpdateProfileRequest>,
 ) -> ApiResult<Json<ProfileResponse>> {
     let user = require_user(&session).await?;
+    // GS-1: at the MAU cap a guest keeps reading but stops writing (§1).
+    crate::guest::guard_write(&state, &user).await?;
 
     let mut username = user.username.clone();
     let mut display_name = user.display_name.clone();
@@ -1218,6 +1226,7 @@ pub async fn update_profile(
         avatar_url: av.clone(),
         provider: user.provider,
         social_url: social_url.clone(),
+        is_guest: user.is_guest,
     };
     session
         .insert(crate::auth::SESSION_USER_KEY, &new_user)

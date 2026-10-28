@@ -161,6 +161,18 @@ export interface SessionUser {
 	avatar_url: string | null;
 	social_url?: string | null;
 	provider?: string;
+	/** GS-1: a guest identity has no credential and is foldable into an account. */
+	is_guest?: boolean;
+}
+
+/** GS-1: whether the guest door is open, and how close it is to closing. */
+export interface GuestStatus {
+	enabled: boolean;
+	is_guest: boolean;
+	mau: number;
+	limit: number;
+	window_days: number;
+	at_cap: boolean;
 }
 
 /** Payload sent to /api/auth/register and /api/auth/login. */

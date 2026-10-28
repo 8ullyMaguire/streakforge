@@ -1,0 +1,192 @@
+//! GS-2 — folding a guest's rows into the account they register.
+//!
+//! Two rules make this safe, and both come from the standard (§2):
+//!
+//! 1. **Schema-driven completeness.** The fold asks `pg_constraint` for every
+//!    column that references `profiles(id)` and **fails if it finds one it does not
+//!    handle**. A hand-kept list of tables drifts the first time a migration lands;
+//!    a fold that silently misses a column surfaces months later as "my logs
+//!    disappeared". The check *is* the feature.
+//! 2. **One transaction, idempotent.** Everything or nothing, and a second fold for
+//!    the same guest is a no-op rather than a double credit (the guest row carries
+//!    `merged_into`, so "already folded" is a fact in the data, not a hope).
+//!
+//! Firewall: the fold grants **tenure** and never **score**. Here tenure is the
+//! whole feature — the streak is computed from `habit_logs`, so moved logs mean the
+//! new account's first day is not day zero. There is no trust ladder on this site
+//! yet, so `merge.grants_trust` has nothing to grant and stays false by having
+//! nothing to do; when GS-4 lands, this is the function that must not touch it.
+
+use std::fmt;
+
+use sqlx::{PgConnection, Row};
+use uuid::Uuid;
+
+/// Columns that hold the guest's own content and are re-parented.
+///
+/// Every entry here must also appear in the `pg_constraint` walk below, or the walk
+/// will report it as unhandled — that duplication is deliberate: the list is what
+/// the code does, and the walk is what proves the list is still complete.
+const FOLDED: &[(&str, &str)] = &[("habit_logs", "user_id"), ("lock_sessions", "user_id")];
+
+/// Columns that reference `profiles(id)` and are deliberately **not** folded.
+///
+/// * `audit_log.profile_id` — the audit trail. Rewriting it would move the record of
+///   what the guest *did* onto the new account, which is precisely the laundering
+///   the standard's firewall forbids one layer up; the row keeps pointing at the
+///   tombstone, which now says where the history went.
+/// * `profiles.merged_into` — the tombstone's own pointer, written by this fold.
+const EXEMPT: &[(&str, &str)] = &[("audit_log", "profile_id"), ("profiles", "merged_into")];
+
+#[derive(Debug)]
+pub enum FoldError {
+    /// A table references `profiles(id)` and this fold does not handle it. The
+    /// caller must refuse the registration rather than half-move a person's data.
+    Unhandled { table: String, column: String },
+    Db(sqlx::Error),
+}
+
+impl fmt::Display for FoldError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FoldError::Unhandled { table, column } => write!(
+                f,
+                "the guest fold does not handle {table}.{column}, which references \
+                 profiles(id); refusing to fold rather than leave the rows behind"
+            ),
+            FoldError::Db(e) => write!(f, "guest fold failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for FoldError {}
+
+impl From<sqlx::Error> for FoldError {
+    fn from(e: sqlx::Error) -> Self {
+        FoldError::Db(e)
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct FoldReport {
+    /// False when the guest had already been folded (a retry, or a double submit).
+    pub folded: bool,
+    /// Rows re-parented, per table, in the order they were moved.
+    pub moved: Vec<(String, u64)>,
+}
+
+/// Move every row the guest authored onto `account_id`, then tombstone the guest.
+///
+/// Runs on a caller-provided connection so the whole registration — the new profile,
+/// the fold, and the consent stamp — is one transaction: a fold that fails must take
+/// the account with it, otherwise the person is left with an empty account and their
+/// streak still attached to an identity they cannot log into.
+pub async fn fold_guest(
+    conn: &mut PgConnection,
+    guest_id: Uuid,
+    account_id: Uuid,
+) -> Result<FoldReport, FoldError> {
+    // Idempotent: `merged_into` is written in the same transaction as the moves, so
+    // a second call sees it and does nothing.
+    let already: Option<Option<Uuid>> =
+        sqlx::query_scalar("select merged_into from profiles where id = $1")
+            .bind(guest_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    match already {
+        None => {
+            return Err(FoldError::Db(sqlx::Error::RowNotFound));
+        }
+        Some(Some(_)) => return Ok(FoldReport::default()),
+        Some(None) => {}
+    }
+
+    for (table, column) in referencing_columns(&mut *conn).await? {
+        if EXEMPT.contains(&(table.as_str(), column.as_str())) {
+            continue;
+        }
+        if !FOLDED.contains(&(table.as_str(), column.as_str())) {
+            return Err(FoldError::Unhandled { table, column });
+        }
+    }
+
+    let mut moved = Vec::with_capacity(FOLDED.len());
+    for (table, column) in FOLDED {
+        // Table and column come from the constant above, never from input.
+        let sql = format!("update public.{table} set {column} = $2 where {column} = $1");
+        let result = sqlx::query(&sql)
+            .bind(guest_id)
+            .bind(account_id)
+            .execute(&mut *conn)
+            .await?;
+        moved.push((format!("{table}.{column}"), result.rows_affected()));
+    }
+
+    // Tombstone, not delete: the audit rows point here, and a deletion request is
+    // answered from them. The username is released so the person may register it.
+    let tombstone = format!("folded_{}", &guest_id.simple().to_string()[..12]);
+    sqlx::query(
+        "update profiles
+            set is_guest = true,
+                merged_into = $2,
+                username = $3,
+                display_name = null,
+                avatar_url = null,
+                social_url = null
+          where id = $1",
+    )
+    .bind(guest_id)
+    .bind(account_id)
+    .bind(&tombstone)
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(FoldReport {
+        folded: true,
+        moved,
+    })
+}
+
+/// Every `(table, column)` in `public` that references `public.profiles(id)`.
+async fn referencing_columns(conn: &mut PgConnection) -> Result<Vec<(String, String)>, FoldError> {
+    let rows = sqlx::query(
+        r#"
+        select c.relname::text as table_name, a.attname::text as column_name
+        from pg_constraint con
+        join pg_class c on c.oid = con.conrelid
+        join pg_namespace n on n.oid = c.relnamespace
+        join pg_class rc on rc.oid = con.confrelid
+        join pg_namespace rn on rn.oid = rc.relnamespace
+        join unnest(con.conkey) as k(attnum) on true
+        join pg_attribute a on a.attrelid = c.oid and a.attnum = k.attnum
+        where con.contype = 'f'
+          and n.nspname = 'public'
+          and rn.nspname = 'public'
+          and rc.relname = 'profiles'
+        order by 1, 2
+        "#,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.get::<String, _>("table_name"),
+                r.get::<String, _>("column_name"),
+            )
+        })
+        .collect())
+}
+
+/// The tables this fold handles, for tests and for the operator-facing list.
+pub fn folded_columns() -> &'static [(&'static str, &'static str)] {
+    FOLDED
+}
+
+/// The columns it deliberately leaves alone, with no reason attached (the reasons
+/// are in the doc comment above — one place to keep them true).
+pub fn exempt_columns() -> &'static [(&'static str, &'static str)] {
+    EXEMPT
+}

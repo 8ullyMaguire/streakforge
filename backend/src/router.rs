@@ -89,6 +89,10 @@ pub async fn build_router(cfg: &Config, pool: PgPool) -> Result<Router, sqlx::Er
             "/consent",
             get(crate::consent::get).post(crate::consent::post),
         )
+        // GS-1. Minting is a mutation, so it goes through the consent gate above;
+        // `GET` is here so the client can ask whether the door is open without
+        // learning it from a failed click.
+        .route("/guest", get(crate::guest::status).post(crate::guest::mint))
         .route("/logs", post(crate::api::log_habit))
         .route("/stats", get(crate::api::get_stats))
         .route("/drill", get(crate::api::get_drill))

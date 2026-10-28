@@ -104,6 +104,19 @@
 				<a href="/denial" class="nav-lock-badge" title="You are locked">🔒</a>
 			{/if}
 			<a href="/settings" class="nav-link">{user.username}</a>
+			{#if user.is_guest}
+				<!--
+					GS-1: a guest holds a real identity with no credential, so the way out
+					of it is registration rather than a password change. Saying so in the
+					navbar is what stops "where is my account" being a question.
+				-->
+				<a
+					href="/login"
+					class="nav-link"
+					style="color:#d4af37;letter-spacing:0.08em;font-size:11px;"
+					title="Guest identity — register to keep this history">GUEST</a
+				>
+			{/if}
 			<button class="btn btn-ghost" onclick={logout}>Log out</button>
 		{:else}
 			<a href="/login" class="btn btn-red">SIGN IN</a>

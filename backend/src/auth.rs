@@ -278,6 +278,10 @@ pub struct SessionUser {
     pub provider: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub social_url: Option<String>,
+    /// GS-1. `serde(default)` so a session written before guest accounts existed
+    /// still deserialises — as a member, which is what every such session was.
+    #[serde(default)]
+    pub is_guest: bool,
 }
 
 // ---- Password hashing (Argon2id) ----
@@ -473,12 +477,23 @@ pub async fn register(
 
     let password_hash = hash_password(&body.password)?;
 
+    // GS-2: the guest this browser has been using, if any. Its rows move into the
+    // new account below, in the same transaction as the account itself.
+    let guest = crate::guest::current(&session)
+        .await?
+        .filter(|u| u.is_guest);
+
+    // One transaction for the account and the fold: a fold that fails must take
+    // the account with it, or the person is left with an empty account and their
+    // streak still attached to an identity they can no longer sign into.
+    let mut tx = state.pool.begin().await?;
+
     // Explicit conflict check first so we can return a clean 409
     // (the unique constraint would also catch it via sqlx::Error mapping).
     let taken: Option<String> =
         sqlx::query_scalar("select username from profiles where username = $1")
             .bind(&username)
-            .fetch_optional(&state.pool)
+            .fetch_optional(&mut *tx)
             .await?;
     if taken.is_some() {
         return Err(ApiError::conflict("That username is already taken"));
@@ -493,13 +508,50 @@ pub async fn register(
     )
     .bind(&username)
     .bind(&password_hash)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await?;
 
     let Some((id, uname, dname, av, provider, social_url)) = row else {
         // Race: someone else took the username between check and insert.
         return Err(ApiError::conflict("That username is already taken"));
     };
+
+    if let Some(guest_user) = &guest {
+        match crate::fold::fold_guest(&mut *tx, guest_user.id, id).await {
+            Ok(report) => {
+                tracing::info!(
+                    guest = %guest_user.id,
+                    account = %id,
+                    moved = ?report.moved,
+                    "guest history folded into the new account"
+                );
+            }
+            // The error carries which column the fold does not handle, which is the
+            // whole point of the walk; the person gets a sentence they can act on.
+            Err(err) => {
+                tracing::error!(error = %err, guest = %guest_user.id, "guest fold refused");
+                return Err(ApiError::new(
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Your guest history could not be moved to the new account — nothing was created",
+                ));
+            }
+        }
+    }
+
+    tx.commit().await?;
+
+    if let Some(guest_user) = &guest {
+        if let Err(err) = crate::audit::record(
+            &state.pool,
+            Some(id),
+            crate::guest::FOLDED_ACTION,
+            serde_json::json!({ "from_guest": guest_user.id }),
+        )
+        .await
+        {
+            tracing::warn!(error = %err, "folded, but the audit row was not written");
+        }
+    }
 
     let user = SessionUser {
         id,
@@ -508,6 +560,7 @@ pub async fn register(
         avatar_url: av,
         provider,
         social_url,
+        is_guest: false,
     };
 
     // GS-3: this request reached the handler through the consent gate, so the
@@ -569,15 +622,15 @@ pub async fn login(
         .with_retry_after(secs));
     }
 
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String, Option<String>, Option<String>)>(
-        "select id, username, display_name, avatar_url, provider, social_url, password_hash
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String, Option<String>, Option<String>, bool)>(
+        "select id, username, display_name, avatar_url, provider, social_url, password_hash, is_guest
          from profiles where username = $1",
     )
     .bind(&username)
     .fetch_optional(&state.pool)
     .await?;
 
-    let Some((id, uname, dname, av, provider, social_url, phc)) = row else {
+    let Some((id, uname, dname, av, provider, social_url, phc, is_guest)) = row else {
         // Unknown user: burn a tiny bit of CPU so the response time doesn't
         // reveal whether the username exists.
         let _ = hash_password(&body.password);
@@ -625,6 +678,7 @@ pub async fn login(
         avatar_url: av,
         provider,
         social_url,
+        is_guest,
     };
     session.insert(SESSION_USER_KEY, &user).await.map_err(ApiError::from)?;
 
@@ -634,14 +688,14 @@ pub async fn login(
 // ---- Profile helpers (registration + session refresh) ----
 
 pub async fn fetch_profile(pool: &PgPool, id: Uuid) -> ApiResult<SessionUser> {
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String, Option<String>)>(
-        "select id, username, display_name, avatar_url, provider, social_url
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, String, Option<String>, bool)>(
+        "select id, username, display_name, avatar_url, provider, social_url, is_guest
          from profiles where id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
     .await?;
-    let Some((id, uname, dname, av, provider, social_url)) = row else {
+    let Some((id, uname, dname, av, provider, social_url, is_guest)) = row else {
         return Err(ApiError::not_found("Profile not found"));
     };
     Ok(SessionUser {
@@ -651,5 +705,6 @@ pub async fn fetch_profile(pool: &PgPool, id: Uuid) -> ApiResult<SessionUser> {
         avatar_url: av,
         provider,
         social_url,
+        is_guest,
     })
 }

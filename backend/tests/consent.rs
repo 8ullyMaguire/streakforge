@@ -34,6 +34,9 @@ fn test_config(version: i32) -> Config {
         wlw_daily_limit: 5,
         consent_version: version,
         consent_required: true,
+        guest_enabled: true,
+        guest_mau_limit: 500,
+        guest_mau_window_days: 30,
     }
 }
 

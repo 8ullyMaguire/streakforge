@@ -5,6 +5,7 @@ import type {
 	DenialResponse,
 	DrillResponse,
 	FeedItem,
+	GuestStatus,
 	KpiResponse,
 	Leaderboard,
 	LeaderboardPeriod,
@@ -60,6 +61,9 @@ export const api = {
 	me: () => request<SessionUser>('/auth/me'),
 	logout: () => request<void>('/auth/logout', { method: 'POST' }),
 	nonce: () => request<{ nonce: string }>('/auth/nonce'),
+	// GS-1: reading the door's state is free and does not mint anything.
+	guestStatus: () => request<GuestStatus>('/guest'),
+	mintGuest: () => request<SessionUser>('/guest', { method: 'POST' }),
 	register: (payload: AuthPayload) => request<SessionUser>('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
 	login: (payload: AuthPayload) => request<SessionUser>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
 	logHabit: (note?: string, kind: LogKind = 'habit') =>

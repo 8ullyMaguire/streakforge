@@ -1,6 +1,6 @@
 # Guest access, trust levels and self-governance — streakforge
 
-Status: **partly implemented — GS-3 (consent) shipped 2026-10-27**, GS-1/GS-2 are still proposals.
+Status: **GS-1, GS-2 and GS-3 shipped (2026-10-27/28)**; GS-4 is the next item and GS-5 stays deferred.
 The estate-wide standard (items GS-1…GS-5, every setting configurable, defaults and firewalls) is:
 
     secondbrain/10-Projects/2026-10-16-guest-access-trust-and-self-governance.md
@@ -13,8 +13,8 @@ Stack: Rust + SvelteKit (web/).
 ## Where streakforge stands today (measured 2026-10-16, updated 2026-10-27)
 
 - accounts exist; no role or trust columns yet (no `trust_level`/`moderator`/`is_admin` hits)
-- no guest identity
-- **GS-3 consent gate is live** (2026-10-27): see *GS-3, as built* below
+- **GS-3 consent gate is live** (2026-10-27) and **GS-1 guest identity + GS-2 fold** (2026-10-28):
+  see *GS-1 and GS-2, as built* and *GS-3, as built* below
 
 ## What this site adopts
 
@@ -87,3 +87,65 @@ returns `{"accepted":true,"categories":{"analytics":true,...}}` — after which 
 What GS-3 does **not** do: it gates no guest identity, because GS-1 does not exist yet. Until it
 does, the gate's only effect is on anonymous visitors who try to register or log in — which is
 exactly the ordering the standard asks for (consent first, then the cookie it makes safe).
+
+## GS-1 and GS-2, as built (2026-10-28)
+
+Files: `backend/migrations/0014_guest_identity.sql`, `backend/src/guest.rs`,
+`backend/src/fold.rs`, `backend/src/audit.rs` (MAU), `backend/tests/guest.rs`,
+`web/src/routes/login` (the door), `web/src/lib/components/Navbar.svelte` (the marker).
+
+**A guest is a real `profiles` row** with `is_guest = true` and **no credential at all** —
+`password_hash` was already nullable, and that is what makes the row unloggable without inventing a
+placeholder hash some future login path might accept. The identity is carried by the session, which
+is the cookie; `POST /api/guest` is a mutation, so it goes through GS-3's gate, which is the ordering
+the standard asks for made literal: the gate really does gate the identity.
+
+**The door closes on MAU**, and the count is `public.monthly_active_accounts(window_days)` — distinct
+accounts with a habit log *or* an audit row in the window, one definition in SQL rather than two in
+Rust. `GUEST_MAU_LIMIT` (default 500; `0` shuts the door, it does not mean unlimited),
+`GUEST_MAU_WINDOW_DAYS` (30), `GUEST_ENABLED`. At the cap: no new identities, no guest writes, reads
+untouched (§1's grace). A subtlety the tests pin: **a mint is itself an action**, so a guest with a
+limit of 1 is at the cap before it does anything.
+
+**The fold is schema-driven and transactional.** `fold_guest` asks `pg_constraint` for every column
+that references `profiles(id)`, fails on any it does not handle (`FoldError::Unhandled`), re-parents
+`habit_logs` and `lock_sessions`, tombstones the guest (`folded_<uuid12>`, `merged_into` set,
+credentialless), and runs on the *same transaction as the account insert*, so a fold that cannot
+finish takes the account with it. Idempotent: `merged_into` is the fact, so a second fold reports
+`folded = false` and moves nothing.
+
+**Tenure, not score.** The streak is computed from the moved logs, so the new account's first day is
+not day zero — that is `merge.grants_tenure = true` on this site, and it is the whole feature. There
+is no trust ladder yet, so `merge.grants_trust` has nothing to grant; when GS-4 lands, the fold is
+the function that must not touch it.
+
+Evidence:
+
+    DATABASE_URL=postgres://sf:test@127.0.0.1:5499/streakforge_dev cargo test
+    # 22 + 11 + 12 + 51 + 10 + 7 = 113 passed, 0 failed   (tests/guest.rs is the 12)
+
+    cd web && npm run check   # 0 errors, 0 warnings
+    npx vitest run            # 128 passed
+    npm run build             # clean
+
+Browser-walked end to end on the dev instance: the door renders on `/login` beside the form with the
+cap named; clicking it **without** consent is refused, the form says "Please choose your cookie
+settings first" and the toast reopens (the `403 {"consent":"required"}` shape reaching the UI, not
+just the API); accepting then mints, redirects, and the navbar shows `GUEST`; a logged waste counts
+(`today=1 streak=1`); registering over that session lands on the new account with **the same
+`today=1 streak=1 alltime=1`**, the navbar marker gone; in the database the guest row reads
+`folded_44e79f7cf16d · is_guest · merged_into set · password_hash null` and its log now belongs to the
+new account. Audit rows: `consent.accepted ×2`, `consent.refused ×1`, `guest.minted ×1`,
+`guest.folded ×1`.
+
+Not done: `merge.notify` (there is no notification channel on this site — the toast on arrival is the
+only place a message could go, and it is not worth inventing a table for), `guest.upload_quarantine`
+(no uploads), `guest.directory_access` (there is no member directory to withhold), and per-fingerprint
+rate limiting beyond recording `guest_fingerprint` — the cap is the mechanism §1 actually names.
+
+## GS-4, next
+
+`trust.axes` from the streak signal the site already computes, `trust.require.moderate`, and the
+elastic rule: when nobody clears the nominal bar, the requirement falls to the top of the actual
+ladder with `trust.elastic_min_holders` holders — and returns to nominal as soon as enough people
+clear the real bar, with no ratchet. The two items the standard flags as "cheap to fake" live here.

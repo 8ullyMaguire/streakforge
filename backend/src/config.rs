@@ -7,6 +7,10 @@ pub const DEFAULT_SESSION_TTL_DAYS: i64 = 30;
 pub const DEFAULT_WLW_DAILY_LIMIT: i64 = 5;
 /// GS-3: first version of the consent notice. Bumping it re-asks.
 pub const DEFAULT_CONSENT_VERSION: i64 = 1;
+/// GS-1: the owner's number for the guest door, from the estate standard (§1).
+pub const DEFAULT_GUEST_MAU_LIMIT: i64 = 500;
+/// GS-1: MAU window, in days (§1).
+pub const DEFAULT_GUEST_MAU_WINDOW_DAYS: i64 = 30;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -26,6 +30,14 @@ pub struct Config {
     /// Bumping it re-asks every visitor whose acceptance is older, which is the
     /// only correct response to changing what is collected.
     pub consent_version: i32,
+    /// GS-1: whether a visitor may mint a guest identity. `GUEST_ENABLED`.
+    pub guest_enabled: bool,
+    /// GS-1: distinct accounts that may act before the guest door closes.
+    /// `GUEST_MAU_LIMIT`, default 500; `0` disables guest access entirely, which is
+    /// the standard's own reading of a zero limit.
+    pub guest_mau_limit: i64,
+    /// GS-1: the window MAU is measured over. `GUEST_MAU_WINDOW_DAYS`, default 30.
+    pub guest_mau_window_days: i64,
     /// GS-3: whether a mutating request needs consent at all. `CONSENT_REQUIRED`
     /// (`1`/`0`, default on). Kept switchable because turning the gate off is
     /// how a deployment answers an incident, and needing a rebuild for that is
@@ -93,6 +105,23 @@ impl Config {
                 1,
                 1000,
             ) as i32,
+            guest_enabled: env::var("GUEST_ENABLED")
+                .map(|v| v.trim() != "0" && v.trim() != "false")
+                .unwrap_or(true),
+            guest_mau_limit: bounded_i64(
+                "GUEST_MAU_LIMIT",
+                env::var("GUEST_MAU_LIMIT").ok().as_deref(),
+                DEFAULT_GUEST_MAU_LIMIT,
+                0,
+                1_000_000,
+            ),
+            guest_mau_window_days: bounded_i64(
+                "GUEST_MAU_WINDOW_DAYS",
+                env::var("GUEST_MAU_WINDOW_DAYS").ok().as_deref(),
+                DEFAULT_GUEST_MAU_WINDOW_DAYS,
+                1,
+                365,
+            ),
             consent_required: env::var("CONSENT_REQUIRED")
                 .map(|v| v.trim() != "0" && v.trim() != "false")
                 .unwrap_or(true),

@@ -41,6 +41,9 @@ fn test_config() -> Config {
         // before it mutates, which is also what proves the gate is passable.
         consent_version: 1,
         consent_required: true,
+        guest_enabled: true,
+        guest_mau_limit: 500,
+        guest_mau_window_days: 30,
     }
 }
 

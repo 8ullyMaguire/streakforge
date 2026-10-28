@@ -8,6 +8,8 @@ pub mod config;
 pub mod consent;
 pub mod db;
 pub mod error;
+pub mod fold;
+pub mod guest;
 pub mod manifesto;
 pub mod router;
 

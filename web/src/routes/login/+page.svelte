@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { api, ApiRequestError } from '$lib/api';
 	import { computeChallengeProof } from '$lib/challenge';
 	import { isValidUsername } from '$lib/validation';
@@ -20,7 +21,35 @@
 	let website = $state(''); // honeypot — hidden, must stay empty
 	let error = $state<string | null>(null);
 	let busy = $state(false);
+	// GS-1: the door is offered only when the server says it is open. Asking first
+	// means a closed door is never a button that fails.
+	let guestOpen = $state(false);
+	let guestLimit = $state(0);
 	const formOpenedAt = Date.now();
+
+	onMount(async () => {
+		try {
+			const status = await api.guestStatus();
+			guestOpen = status.enabled && !status.at_cap;
+			guestLimit = status.limit;
+		} catch {
+			guestOpen = false;
+		}
+	});
+
+	async function continueAsGuest() {
+		if (busy) return;
+		busy = true;
+		error = null;
+		try {
+			await api.mintGuest();
+			pushToast('You are in as a guest. Register any time to keep this history.');
+			window.location.href = next;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Could not open a guest session.';
+			busy = false;
+		}
+	}
 
 	function switchMode(next: Mode) {
 		mode = next;
@@ -169,5 +198,28 @@
 				? 'Already have an account? Use the SIGN IN tab.'
 				: 'New here? Switch to REGISTER to claim your username.'}
 		</p>
+
+		{#if guestOpen}
+			<!--
+				GS-1: a guest is a real identity with no credential, and its history is
+				folded into the account on registration — so this is not a throwaway
+				session, and the sentence has to say so or nobody spends an evening on it.
+			-->
+			<div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08);">
+				<button
+					class="btn btn-ghost btn-block"
+					onclick={continueAsGuest}
+					disabled={busy}
+					type="button"
+				>
+					{busy ? 'OPENING…' : 'LOOK AROUND WITHOUT AN ACCOUNT'}
+				</button>
+				<p style="color:var(--text-dim);font-size:12px;margin:8px 0 0;line-height:1.5;">
+					A guest identity, no password. What you log as a guest moves into your account
+					when you register — the streak is not lost, because it was never a demo. Guests
+					are capped at {guestLimit} active accounts site-wide.
+				</p>
+			</div>
+		{/if}
 	</div>
 </div>

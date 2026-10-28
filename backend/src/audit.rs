@@ -36,11 +36,11 @@ pub async fn record(
 /// visitors that arrived, because the cap it feeds exists to limit how much
 /// unowned content the site is carrying at once.
 pub async fn monthly_active_accounts(pool: &PgPool, window_days: i32) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
-        "select count(distinct profile_id) from audit_log
-         where profile_id is not null and at >= now() - make_interval(days => $1)",
-    )
-    .bind(window_days.max(1))
-    .fetch_one(pool)
-    .await
+    // One definition, in SQL (migration 0014), because the count spans two tables
+    // here: a habit log is an action, and so is an audit row. Keeping the query in
+    // Rust as well would be two definitions of the same number.
+    sqlx::query_scalar("select public.monthly_active_accounts($1)")
+        .bind(window_days.max(1))
+        .fetch_one(pool)
+        .await
 }
