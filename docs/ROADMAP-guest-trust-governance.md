@@ -143,9 +143,20 @@ only place a message could go, and it is not worth inventing a table for), `gues
 (no uploads), `guest.directory_access` (there is no member directory to withhold), and per-fingerprint
 rate limiting beyond recording `guest_fingerprint` — the cap is the mechanism §1 actually names.
 
-## GS-4, next
+## GS-4 — deferred, and here is why that is not laziness
 
-`trust.axes` from the streak signal the site already computes, `trust.require.moderate`, and the
-elastic rule: when nobody clears the nominal bar, the requirement falls to the top of the actual
-ladder with `trust.elastic_min_holders` holders — and returns to nominal as soon as enough people
-clear the real bar, with no ratchet. The two items the standard flags as "cheap to fake" live here.
+`trust.axes` would come from the streak signal the site already computes, and the elastic rule is the
+interesting half: when nobody clears the nominal bar, the requirement falls to the top of the actual
+ladder with `trust.elastic_min_holders` holders, and returns to nominal as soon as enough people clear
+the real bar, with no ratchet.
+
+**Nothing on this site would read it.** GS-4 exists to feed the privileges in `trust.require.<priv>`
+— `moderate`, `jury`, `invite`, `annotate` — and this site has none of them: there is no moderation
+queue, no content to govern (GS-5 is deferred for the same reason), and no invite system. A
+`trust_level` that no route consults is the "a field with no reader" failure this estate has already
+paid for twice (a `default_hashtag` with no consumer; a `collapsible` column with no collapse route).
+
+So GS-4 lands **with the first privilege it gates**, not before it — most likely the day GS-5 acquires
+something to govern. The elastic rule is the part that must not be faked: it needs a test that fails
+for the wrong reason (an empty pool, a pool of one, and a pool that later grows past the nominal bar)
+before it can be called implemented.
