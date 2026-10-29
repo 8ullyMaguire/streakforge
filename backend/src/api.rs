@@ -7,9 +7,10 @@
 //     "I denied five times today" is not a thing
 //   - affirmations (kind = 'affirmation'): DAILY_LIMIT per UTC day, their own
 //     budget so drill reps neither consume nor pollute the waste allowance
-//   - a waste (habit) and a denial (WLD) are mutually exclusive on the same day:
-//     recording one invalidates the other's eligibility that day, whatever is
-//     left of the other's budget
+//   - a waste (habit) and a denial (WLD) are exclusive in ONE direction on the
+//     same UTC day: a recorded waste spends the denial's day (a whiteboi who cums
+//     cannot claim a denial), but a recorded denial does not touch the waste
+//     budget — a relapse after a stand is the event the site counts
 // `daily_budget()` is the single source of truth for all three; check_rate_limits
 // and compute_stats both read it so the rule can't drift between enforcement and
 // what the UI is told.
@@ -139,8 +140,9 @@ pub struct StatsResponse {
     /// report. The two questions are genuinely different -- "may I log now" and
     /// "when does the allowance come back" -- and they were sharing an answer.
     pub secs_until_reset: i64,
-    /// True when today's submission is blocked because the OTHER exclusive kind
-    /// already ran (a waste blocks a denial, a denial blocks a waste).
+    /// True when today's submission is blocked by the one-way exclusivity rule:
+    /// a recorded waste blocks a denial for the rest of the UTC day. Never true
+    /// for a waste (a denial does not block one) or for a drill.
     pub blocked_by_exclusivity: bool,
     /// Whiteboi Devotion Index for this user (all-time), decomposed.
     pub devotion: DevotionIndexResponse,
@@ -341,12 +343,12 @@ pub async fn check_rate_limits(
     let now = OffsetDateTime::now_utc();
     let today_start = now.date().midnight().assume_utc();
 
-    // Counts for the current UTC day, per kind.
-    let (habits_today, denials_today, kind_today): (i64, i64, i64) = sqlx::query_as(
+    // Counts for the current UTC day, per kind. `habits_today` is the only one
+    // the exclusivity rule reads now — see the direction note below.
+    let (habits_today, kind_today): (i64, i64) = sqlx::query_as(
         "select
-           (select count(*) from habit_logs where user_id = $1 and kind = 'habit'  and log_date = $2),
-           (select count(*) from habit_logs where user_id = $1 and kind = 'denial' and log_date = $2),
-           (select count(*) from habit_logs where user_id = $1 and kind = $3        and log_date = $2)",
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit' and log_date = $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = $3       and log_date = $2)",
     )
         .bind(user_id)
         .bind(today_start.date())
@@ -359,20 +361,24 @@ pub async fn check_rate_limits(
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default();
 
-    // WLWs and WLDs are mutually exclusive: recording a waste today makes a
-    // denial today ineligible, and vice versa. Enforced as a hard block, since
-    // the Devotion Index treats the two streaks as competing. The exclusivity
-    // rule is about the DAY, not about the budget: one waste already spends the
-    // denial's whole day, and it does not matter how many of the waste budget
-    // are left.
+    // WLWs and WLDs are exclusive in ONE direction, and the direction is the
+    // whole rule (owner, 2026-10-29):
+    //
+    //   waste  -> denial : BLOCKED. A whiteboi who cums cannot claim he was
+    //                       denied. The denial day is spent the moment a load is
+    //                       wasted, however much of the waste budget is left.
+    //   denial -> waste : ALLOWED. A reported denial is not a promise, and a load
+    //                      wasted after a stand is exactly the failure this site
+    //                      exists to count. Refusing it hid the relapse and left
+    //                      the waste counter at zero for the rest of the day.
+    //
+    // The waste budget is untouched by a denial either way: five is five. The
+    // Devotion Index still treats the two as competing streaks
+    // (`exclusive_streak` follows the most recent kind), so switching kind is
+    // never a free win — it only costs the active streak.
     if kind == LogKind::Denial && habits_today >= 1 {
         return Err(ApiError::too_many_requests(
-            "You already recorded a load wasted today. WLWs and WLDs are mutually exclusive — a whiteboi who cums cannot claim a denial. Come back tomorrow.",
-        ));
-    }
-    if kind == LogKind::Habit && denials_today >= 1 {
-        return Err(ApiError::too_many_requests(
-            "You already recorded a denial today. WLWs and WLDs are mutually exclusive — a denial day stands. Come back tomorrow.",
+            "You already recorded a load wasted today. WLWs and WLDs are one way: a whiteboi who cums cannot claim a denial. Come back tomorrow.",
         ));
     }
 
@@ -428,6 +434,9 @@ async fn denial_next_allowed(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<Op
     .fetch_one(pool)
     .await?;
 
+    // Two things can spend the denial's day: a denial already reported, or a
+    // load wasted today (the one-way rule — waste blocks the denial, not the
+    // reverse). Either way the next opportunity is the next UTC midnight.
     if denials_today >= 1 || wastes_today >= 1 {
         let secs = (next_utc_midnight(now) - now).whole_seconds().max(0);
         return Ok(Some(secs));
@@ -650,11 +659,10 @@ async fn compute_stats(
     })
     .collect();
 
-    let (habits_today, denials_today, kind_today): (i64, i64, i64) = sqlx::query_as(
+    let (habits_today, kind_today): (i64, i64) = sqlx::query_as(
         "select
-           (select count(*) from habit_logs where user_id = $1 and kind = 'habit'  and log_date = $2),
-           (select count(*) from habit_logs where user_id = $1 and kind = 'denial' and log_date = $2),
-           (select count(*) from habit_logs where user_id = $1 and kind = $3        and log_date = $2)",
+           (select count(*) from habit_logs where user_id = $1 and kind = 'habit' and log_date = $2),
+           (select count(*) from habit_logs where user_id = $1 and kind = $3       and log_date = $2)",
     )
     .bind(user_id)
     .bind(today_start.date())
@@ -662,13 +670,11 @@ async fn compute_stats(
     .fetch_one(pool)
     .await?;
 
-    // WLWs and WLDs are mutually exclusive. An affirmation is neither, so it is
-    // never blocked by exclusivity and never blocks anything.
-    let blocked_by_exclusivity = match kind {
-        LogKind::Habit => denials_today >= 1,
-        LogKind::Denial => habits_today >= 1,
-        LogKind::Affirmation => false,
-    };
+    // The exclusivity rule is one-way (see check_rate_limits), and this flag has
+    // to mirror it exactly or the UI disables a button the server would accept:
+    // a waste today spends the DENIAL's day, but a denial today does not touch
+    // the waste budget. So a habit is never exclusive-blocked.
+    let blocked_by_exclusivity = kind == LogKind::Denial && habits_today >= 1;
 
     // Mirrors check_rate_limits exactly, off the same daily_budget(): loads
     // wasted are a budget (WLW_DAILY_LIMIT, default 5), a denial is one per day,

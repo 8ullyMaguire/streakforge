@@ -45,6 +45,8 @@ Plus `STATUS.md` for the living dev-status checklist.
 - **Rate limiting (server-enforced, per kind, per UTC calendar day)**:
   - Loads wasted: **5 per day**, configurable with `WLW_DAILY_LIMIT` (1–100).
   - Denials: 1 per day. A denial day is a stand.
+  - Exclusivity is one-way: a waste spends the day's denial; a denial never
+    spends a waste slot.
   - Drill reps: 5 per day, their own budget.
   - Clear 429 messages that name both the limit and the time it resets.
 - **Personal dashboard** — today's count, current streak, longest streak, this
@@ -236,8 +238,9 @@ with `row_number()` grouping).
 - 5 logs / UTC day / user / kind (`WLW_DAILY_LIMIT`, default 5) — checked against
   `log_date = today (UTC)`. A denial is 1/day; drill reps have their own budget.
 - `habit`, `denial` and `affirmation` have independent budgets (drilling doesn't
-  consume your daily waste allowance), and the loan rule holds as always: one waste or
-  one denial fills a day, never both.
+  consume your daily waste allowance). Exclusivity is one-way: a waste recorded today
+  spends the day's denial, but a denial never spends a waste slot — the load wasted
+  after a stand is the event the site counts.
 - Enforced in `check_rate_limits()` in `api.rs`, **before any insert**.
 - **Failed logins have their own throttle** (5 per username, 30 per address, per 15
   minutes), checked before any password hashing, in a table so an API restart does not

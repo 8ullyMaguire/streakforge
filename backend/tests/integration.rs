@@ -987,7 +987,16 @@ async fn a_log_yesterday_no_longer_blocks_today(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn wlw_and_wld_are_mutually_exclusive(pool: PgPool) {
+async fn exclusivity_is_one_way_and_the_owner_named_the_direction(pool: PgPool) {
+    // The rule (owner, 2026-10-29): "I should be able to click waste load right
+    // after denial, but not the other way around."
+    //
+    //   waste -> denial : BLOCKED. A whiteboi who cums cannot claim he was denied
+    //                     for the same UTC day -- the day is spent the moment the
+    //                     load is wasted, however much of the budget is left.
+    //   denial -> waste : ALLOWED. Standing denial is not a promise, and a load
+    //                     wasted after a reported denial is exactly the failure
+    //                     this site exists to count.
     let uid = sqlx::query_scalar::<_, uuid::Uuid>(
         "insert into profiles (username) values ('daily_excl') returning id",
     )
@@ -995,8 +1004,8 @@ async fn wlw_and_wld_are_mutually_exclusive(pool: PgPool) {
     .await
     .unwrap();
 
-    // ONE waste spends the whole day, even though the waste budget (5) has four
-    // left in it. Exclusivity is about the day, not about the budget.
+    // ONE waste spends the denial's day, even though the waste budget (5) has
+    // four left in it. Exclusivity is about the day, not about the budget.
     log_on_day(&pool, uid, "habit", 0).await;
     assert_eq!(
         check_rate_limits(&pool, uid, LogKind::Denial, WLW_TEST_LIMIT)
@@ -1013,7 +1022,7 @@ async fn wlw_and_wld_are_mutually_exclusive(pool: PgPool) {
         "one waste must not exhaust a budget of five"
     );
 
-    // and the reverse: a denial blocks every remaining waste slot
+    // The direction that was wrong: a denial must NOT spend the waste budget.
     let uid2 = sqlx::query_scalar::<_, uuid::Uuid>(
         "insert into profiles (username) values ('daily_excl2') returning id",
     )
@@ -1022,10 +1031,27 @@ async fn wlw_and_wld_are_mutually_exclusive(pool: PgPool) {
     .unwrap();
 
     log_on_day(&pool, uid2, "denial", 0).await;
-    assert_eq!(
+    assert!(
         check_rate_limits(&pool, uid2, LogKind::Habit, WLW_TEST_LIMIT)
             .await
-            .expect_err("a waste after a denial today must be rejected")
+            .is_ok(),
+        "a waste after a denial today must be allowed: the relapse is the point"
+    );
+    // The denial's own cadence is untouched by that.
+    assert_eq!(
+        check_rate_limits(&pool, uid2, LogKind::Denial, WLW_TEST_LIMIT)
+            .await
+            .expect_err("a second denial on the same UTC day must be rejected")
+            .status,
+        429
+    );
+    // ...and the waste that was just allowed spends a slot of its budget, not the
+    // whole day: five is the ceiling, and the count is what says so.
+    log_on_day(&pool, uid2, "habit", 0).await;
+    assert_eq!(
+        check_rate_limits(&pool, uid2, LogKind::Denial, WLW_TEST_LIMIT)
+            .await
+            .expect_err("once a load is wasted the denial is spent as well")
             .status,
         429
     );

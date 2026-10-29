@@ -447,3 +447,85 @@ async fn stats_reports_the_budget_and_the_decay_countdown(pool: PgPool) {
         "the day's allowance still has a clock ({reset}s until UTC midnight), even while a log is allowed"
     );
 }
+
+/// POST one log of `kind` as the session in `cookie`.
+async fn log_kind(app: &Router, cookie: &str, kind: &str) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/logs")
+                .header("content-type", "application/json")
+                .header("cookie", cookie)
+                .body(Body::from(format!(r#"{{"kind":"{kind}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+/// One-way exclusivity, asserted through the router — i.e. against the exact
+/// payload the dashboard button reads.
+///
+/// The owner's report was behavioural: "I should be able to click waste load
+/// right after denial." A disabled button is not a styling problem — it is
+/// `GET /api/stats` answering `can_log: false` with `blocked_by_exclusivity:
+/// true`, because the habit payload mirrors `check_rate_limits()` and that
+/// function used to refuse a waste for the rest of a day that held a denial.
+/// So this test asserts the JSON the button sees AND the 201 the click makes,
+/// and then that the other direction is still refused.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_denial_blocks_the_next_denial_but_never_the_waste_button(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = register(&app, "onewayprobe").await;
+
+    let first = log_kind(&app, &cookie, "denial").await;
+    assert_eq!(
+        first.status(),
+        StatusCode::CREATED,
+        "the day's one denial must log"
+    );
+
+    // What the WASTE A LOAD button sees one second later.
+    let res = get(&app, "/api/stats", Some(&cookie)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert_eq!(
+        body["blocked_by_exclusivity"], false,
+        "a denial must not mark the waste as exclusive-blocked"
+    );
+    assert_eq!(
+        body["can_log"], true,
+        "can_log drives the button's disabled attribute — it must be true after a denial"
+    );
+    assert_eq!(
+        body["remaining_today"], 5,
+        "a denial does not spend a slot of the waste budget"
+    );
+    assert_eq!(
+        body["next_allowed_in_secs"], 0,
+        "nothing to wait for: the waste is allowed right now"
+    );
+
+    let waste = log_kind(&app, &cookie, "habit").await;
+    assert_eq!(
+        waste.status(),
+        StatusCode::CREATED,
+        "a load wasted after a reported denial is the outcome the site counts"
+    );
+
+    // The other direction is the one the owner kept: a whiteboi who cums cannot
+    // claim he was denied.
+    let refused = log_kind(&app, &cookie, "denial").await;
+    assert_eq!(
+        refused.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "a denial after a waste on the same UTC day must be refused"
+    );
+    let body = json_of(refused).await;
+    let msg = body["error"].as_str().unwrap_or_default();
+    assert!(
+        msg.contains("load wasted today"),
+        "the refusal has to name the rule that fired: {msg}"
+    );
+}

@@ -35,8 +35,8 @@ export const TERMS: GlossaryTerm[] = [
 	{
 		term: 'Exclusivity',
 		definition:
-			'A UTC day can hold a waste or a denial, never both. The oldest rule on the site, and the one the whole score rests on.',
-		enforced: 'the logging endpoints refuse the second kind for the day'
+			'One-way, and the direction is the rule: a waste spends the day\'s denial, because a whiteboi who cums cannot claim he was denied. A denial spends nothing — the load you waste afterwards is exactly what the site is here to count.',
+		enforced: 'the denial endpoint refuses after a waste; the waste endpoint never refuses after a denial'
 	},
 	{
 		term: 'Devotion Index',
@@ -83,7 +83,7 @@ export const TERMS: GlossaryTerm[] = [
 	{
 		term: 'Denial cadence',
 		definition:
-			'One denial per UTC day, and it does not spend the waste budget. A denial and a waste cannot share a day.',
+			'One denial per UTC day, and it does not spend the waste budget. A waste recorded first does spend the denial\'s day, so report the stand before you fall.',
 		enforced: 'the denial endpoint, per UTC day'
 	},
 	{

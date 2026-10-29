@@ -105,7 +105,7 @@
 		</h1>
 		<p style="color:var(--text-dim);font-size:14px;margin:0 0 10px;">
 			Loads wasted are a budget of {stats.daily_limit} a day (UTC) — miss every one and
-			the streak resets. A denial and a waste are mutually exclusive.
+			the streak resets. A waste spends the day's denial; a denial does not spend a waste.
 		</p>
 
 		<!--
@@ -208,9 +208,6 @@
 				style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;letter-spacing:0.04em;color:var(--text-dim);margin-bottom:12px;"
 			>
 				<span>{budgetLabel(stats.remaining_today, stats.daily_limit, stats.secs_until_reset, now - receivedAt)}</span>
-				{#if stats.blocked_by_exclusivity}
-					<span style="color:var(--gold);">the other kind already ran today</span>
-				{/if}
 			</div>
 			<LogButton stats={() => stats!} onLogged={handleLogged} {receivedAt} />
 		</div>

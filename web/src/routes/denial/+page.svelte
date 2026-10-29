@@ -202,7 +202,7 @@
 					</div>
 					<p style="color:var(--text-dim);font-size:12px;margin:2px 0 0;">
 						{#if data.stats.blocked_by_exclusivity}
-							WLWs and WLDs are mutually exclusive — a waste today blocks the denial.
+							A load went wasted today, and that spends the denial's day — a whiteboi who cums cannot claim a denial.
 						{:else}
 							Next denial reportable at 00:00 UTC
 						{/if}

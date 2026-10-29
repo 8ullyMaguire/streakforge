@@ -1,5 +1,35 @@
 # StreakForge — Development Status
 
+## 2026-10-29 — exclusivity had a direction all along, and the code had it the wrong one
+
+The owner: *"I should be able to click waste load right after denial, but not the other way
+around."* Nothing was mis-styled. `check_rate_limits()` refused a **waste** for the rest of a
+UTC day that already held a denial, and `compute_stats()` mirrored that into
+`GET /api/stats` as `can_log: false, blocked_by_exclusivity: true` — which is not a hint, it is
+literally the WASTE A LOAD button's `disabled` attribute. The button was doing what the server
+said.
+
+The rule is now one-way, the way the scoring always behaved:
+
+| sequence (same UTC day) | before | now |
+|---|---|---|
+| waste → denial | 429 | 429 (a whiteboi who cums cannot claim a denial) |
+| denial → waste | 429 | **201** (the relapse is the event the site counts) |
+| denial → denial | 429 | 429 |
+| 6th waste | 429 | 429 |
+
+`blocked_by_exclusivity` is therefore now only ever true on a denial payload, and the dead
+waste-side copy is gone from `LogButton`, the dashboard and the denial page. The Devotion
+Index is untouched: `exclusive_streak()` still follows the most recent kind, so switching still
+costs the active streak — the block only ever cost the *record*.
+
+Verified: RED first (the new route test failed on the old code with
+`blocked_by_exclusivity: true`), then GREEN — 22 unit + 51 integration + 11 routes + 11 auth +
+7 edge-case, 128 vitest, `svelte-check` 0/0 — and then live on the deployed binary with a probe
+account that logged denial → waste (201) → denial (429), deleted afterwards. Docs updated with
+it: SPEC §14, README, SESSION_CONTEXT, the glossary's `Exclusivity` and `Denial cadence`
+entries. Plan: `docs/plans/2026-10-29-one-way-exclusivity.md`.
+
 ## 2026-10-15 — the streak edge-case table, and the `pub` day function it proved wrong
 
 The 2026-10-04 ranking's verification ask for this project was "add an edge-case table for

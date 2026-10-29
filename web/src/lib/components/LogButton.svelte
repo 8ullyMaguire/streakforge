@@ -80,13 +80,8 @@
 <div style="display:flex;flex-direction:column;gap:12px;">
 	{#if blocked}
 		<p style="color:var(--red);font-size:13px;margin:0;">
-			{#if kind === 'denial'}
-				You already recorded a waste today — WLWs and WLDs are mutually exclusive, so the
-				denial stands blocked until midnight UTC.
-			{:else}
-				You already recorded a denial today — WLWs and WLDs are mutually exclusive, so the
-				waste stands blocked until midnight UTC.
-			{/if}
+			You already recorded a waste today — and a whiteboi who cums cannot claim a
+			denial. The waste itself is not blocked; the denial is, until midnight UTC.
 		</p>
 	{:else if !canLog && remaining > 0}
 		<p style="color:var(--text-dim);font-size:13px;margin:0;">

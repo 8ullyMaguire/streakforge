@@ -931,9 +931,11 @@ space, capitalize first letter).
 - **Granularity**: per user, per kind.
 - **Window**: fixed UTC calendar day (`log_date`), not a rolling 24h window — a log
   at 23:50 must not lock a user out until 23:50 the next day.
-- **Exclusivity is about the DAY, not the budget**: one waste spends the denial's
-  whole day even with four waste slots left, and any denial blocks every remaining
-  waste slot.
+- **Exclusivity is ONE-WAY, and the direction is the rule**: a recorded waste
+  spends the denial's whole day even with four waste slots left (a whiteboi who cums
+  cannot claim he was denied), but a recorded denial does NOT spend the waste budget
+  or block a waste — a load wasted after a stand is the event the site counts.
+  `blocked_by_exclusivity` is therefore only ever true on a denial payload.
 - **Enforcement**: before insert, in `check_rate_limits()`; 429 naming both the
   budget and the clock ("Daily limit reached (5 loads wasted per UTC day). You can
   waste again at <iso>.").

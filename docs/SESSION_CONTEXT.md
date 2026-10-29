@@ -31,7 +31,7 @@
 | DB prod | thinkcentre `streakforge`, role `streakforge` (has CREATEDB). Password lives only in `/opt/streakforge/.env` |
 | Migrations | `0001`–`0011`, applied automatically at startup |
 | Frontend build | `web/build` (adapter-static), served by Rust — **rebuild after every frontend change** |
-| Rate limits | wastes 5/UTC day (`WLW_DAILY_LIMIT`), denials 1/day, reps 5/day; waste and denial are mutually exclusive per day |
+| Rate limits | wastes 5/UTC day (`WLW_DAILY_LIMIT`), denials 1/day, reps 5/day; a waste spends the day's denial, a denial never spends a waste (one-way, since 2026-10-29) |
 | Login throttle | 5 failures/username or 30/address per 15 min → 429 + `Retry-After` |
 | Score | `(days wasted + days denied + drill bonus) × multiplier`; counts DAYS; 24h account-age floor on boards |
 | Session | 30 days (`SESSION_TTL_DAYS`); prod cookie is `__Host-streakforge_session` (Secure) |
