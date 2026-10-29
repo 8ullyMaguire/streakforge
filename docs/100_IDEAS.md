@@ -650,3 +650,114 @@ No email means no magic link, but WebAuthn needs no email at all: a passkey per 
 *Score 0.5 — impact 4 ÷ effort 8 (L) — Ops*
 
 The dev box builds and the ThinkCentre serves; if either is unavailable nothing ships and nothing runs. Publishing the release binary as an artifact (a GitHub release, a container image) makes the deploy reproducible from anywhere, which is also what makes onboarding another operator possible.
+
+
+---
+
+## 2026-10-29 (second pass) — what the shipped features imply next
+
+Scored the same way as everything else: **impact ÷ effort**, so 1.0 is the best possible ratio and
+0.33 is a real idea that should wait. This batch is deliberately downstream of what landed today —
+cage checks, trust levels, time to cum, public-by-default confessions — because the gaps that matter
+now are the ones the new surfaces exposed (a metric with no ranking, a setting with no surface, a
+mechanic with no clock).
+
+### 101. Cage state on the dashboard
+*Score 1.0 — impact 4 ÷ effort 4 (M) — Cage*
+
+The check is the only input the cage metric needs, and it lives on a page nobody visits twice. A 'checked today / check due in Xh' strip on /dashboard is one query and removes the friction that makes verified hours starve.
+
+### 102. Time to cum on every log surface, not just the landing page
+*Score 1.0 — impact 4 ÷ effort 4 (M) — Metrics*
+
+The field exists on the landing flow; the dashboard, /denial and /log still write rows with no duration, so the aggregate is fed by one path. Same input, same PATCH, four surfaces.
+
+### 103. A verified-cage-hours board
+*Score 1.0 — impact 3 ÷ effort 3 (S) — Cage*
+
+cage_check_hours() and total_verified_cage_hours() are computed and published but ranked nowhere. One board makes the metric competitive, which is what makes members attest each other.
+
+### 104. Flag and attest where the content is
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Moderation*
+
+Moderation currently lives on /moderation, so nobody meets a bad log where they meet it. A flag control on feed items and confirm/dispute on the cage queue put the quorum at the point of contact.
+
+### 105. The numbers block on every profile
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Identity*
+
+A profile shows the score and the streak. Verified cage hours, trust level and a reported average (opt-in) make it the share surface — no OG image needed for the site to be worth screenshotting.
+
+### 106. A WLD board of its own
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Boards*
+
+kind_streaks already separates waste from denial, but the leaderboard collapses them. Denial is the 10× event and the site's actual differentiator, and it is currently invisible as a ranking.
+
+### 107. Say what a flag needs to become a verdict
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Moderation*
+
+'Three flags hide it' is in the doctrine; the queue item says only 'N flags'. Showing 'needs 1 more voice from a trusted member' turns a mysterious verdict into a task someone can finish.
+
+### 108. Quorum abuse resistance
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Moderation*
+
+A flag and an attestation are one INSERT each and the counting trusts the reporter's level. Weighting a voice, capping flags per member per day and never counting a guest-born flag towards a quorum is the difference between moderation and a griefing tool.
+
+### 109. A pause that does not lie
+*Score 0.67 — impact 4 ÷ effort 6 (L) — Retention*
+
+A member who stops for a week loses the multiplier and, in 30 days, the score — so they leave rather than return. An explicit pause (visible on the board, decaying at a documented rate) keeps the history honest and the member reachable.
+
+### 110. A catch-up window for yesterday only
+*Score 0.6 — impact 3 ÷ effort 5 (M) — Retention*
+
+People log the day they remember, which is often after midnight. Allowing exactly one backdated log for yesterday, once per day, recovers real activity without turning the streak into fiction.
+
+### 111. Export my history
+*Score 0.6 — impact 3 ÷ effort 5 (M) — Data*
+
+No email, no data portability: the rows are the member's and there is no way to take them. A CSV/JSON download of one's own logs, locks and checks is small, and it is the honest answer to 'what happens to my data'.
+
+### 112. Nudge a guest at the second log
+*Score 0.6 — impact 3 ÷ effort 5 (M) — Growth*
+
+Guest rows fold into the account already, so the fold is built and the conversion is not. A one-line prompt after log #2 ('keep this — create an account, your history moves with you') uses machinery that exists.
+
+### 113. A referral link with attribution
+*Score 0.6 — impact 3 ÷ effort 5 (M) — Growth*
+
+The site has no way for a member to bring another, and the landing page is the only entry. A signed link plus a 'brought by' column on profiles is the smallest honest growth loop this site can have.
+
+### 114. Web Push for the three clocks that matter
+*Score 0.5 — impact 4 ÷ effort 8 (L) — Retention*
+
+PWA is installed already, so a service worker plus a stored subscription reaches the member when the lock is stale, the check is due or the multiplier is at risk. Needs a push service, not email — the site's no-email constraint is not violated.
+
+### 115. Cage hours as a second index on the board
+*Score 0.5 — impact 3 ÷ effort 6 (L) — Boards*
+
+Verified hours are the most expensive number on the site to fake and the least ranked. A second column on the leaderboard (score | verified hours) rewards the behaviour the cage exists for without rewriting the score.
+
+### 116. A read-only keyholder link
+*Score 0.43 — impact 3 ÷ effort 7 (L) — Identity*
+
+One signed, revocable token that shows a member's lock, check history and streak to someone else without an account. It is the feature this genre's users ask for first, and it needs no new identity model.
+
+### 117. A per-person time-to-cum trend
+*Score 0.4 — impact 2 ÷ effort 5 (M) — Metrics*
+
+The site publishes one average per member and nothing over time. A 30-day sparkline turns a curiosity into something a member can watch change, and the data is already there.
+
+### 118. Doctrine as pages and a feed
+*Score 0.4 — impact 2 ÷ effort 5 (M) — Growth*
+
+The doctrine is served through an API and rendered client-side only. Static pages plus an RSS feed make it indexable and subscribable — the cheapest traffic surface the site has.
+
+### 119. An OG share card per profile and per milestone
+*Score 0.38 — impact 3 ÷ effort 8 (L) — Growth*
+
+og.png is static. Rendering the score, streak and verified hours into a per-profile image makes every milestone shareable without a screenshot, which is how a small site gets a graph.
+
+### 120. Sessions you can see and end
+*Score 0.33 — impact 2 ÷ effort 6 (L) — Ops*
+
+There is one session cookie and no list. 'Signed in on these devices, end this one' is standard hygiene for a site holding this kind of history, and it is a table plus two endpoints.
