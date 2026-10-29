@@ -1,5 +1,57 @@
 # StreakForge — Development Status
 
+## 2026-10-29 (later) — cage checks, quorum moderation, time to cum, public confessions
+
+Four asks in one pass, plus the one-click landing flow and the reversal that a confession is
+public unless its author says otherwise. Spec: `docs/specs/2026-10-29-cage-checks-trust-time-to-cum.md`;
+plan: `docs/plans/2026-10-29-cage-trust-time-to-cum.md`.
+
+- **Cage checks** (`/cage`, `0015`): one check per UTC day while a lock is open, an 8-hex seal
+  code issued at creation, claimed time capped at 72h, and **hours that only exist once peers
+  attest** — 2 confirmations from distinct members, or 1 from level 3. `cage_check_hours()` publishes
+  claimed / verified / pending / disputed, a verification rate, and verified-day streaks;
+  `total_verified_cage_hours()` is the site-wide total. Nothing is uploaded: a check is a claim and a code.
+- **Trust levels + quorum** (`/moderation`, `0016`): levels 0–4 are *computed* by `trust_level()`
+  (age, active days, contributions = logs + attestations, upheld flags), never stored — the only
+  stored bit is `profiles.is_leader`. Three flags with at least one from level ≥ 2 hide a target,
+  two restore votes (or one leader action) bring it back, and every hide/restore is appended to
+  `moderation_actions` with its actor.
+- **Time to cum** (`/metrics`, `0017`): `habit_logs.time_to_cum_secs`, the owner's definition —
+  start of the session to release, per log. The page publishes the pooled average, the median, and
+  an average of per-person averages, because the two answer different questions and one heavy
+  logger must not define the site.
+- **Public confessions, private on request**: `profiles.logs_public` defaults to true and
+  `activity_feed()` — not the handler — applies it, so a private author's rows leave the feed while
+  their logs, streak and score are untouched. The setting is a checkbox on `/settings` with the
+  consequence spelled out, and the feed page states the default rather than hoping nobody notices.
+- **One-click logging**: the landing page's two buttons POST directly. The duration and a 15-minute
+  undo are offered *after* the fact, inline — `PATCH /api/logs/{id}` and `DELETE /api/logs/{id}`
+  both refuse past the window with 403.
+
+**A green suite hid a 500 until the guest tests ran.** `POST /api/auth/register` failed for any
+guest once the new tables existed: `src/fold.rs` walks `pg_constraint` for every foreign key into
+`profiles(id)` and refuses to half-move a person's history, and four new keys were unclassified.
+`cage_checks.user_id` and `cage_attestations.attester_id` now fold (own tenure — 0016 counts
+attestations towards contributions, so dropping them would silently reset a converting member to
+level 0); `flags.reporter_id` and `moderation_actions.actor_id` stay with the tombstone, because a
+vote about someone else's content and an action log must not be re-cast under a new name. New test:
+`tests/guest.rs::the_fold_moves_cage_tenure_and_leaves_votes_with_the_tombstone`.
+
+Verified: 22 unit + 11 auth + 13 guest + 59 integration + 15 routes + 7 edge-case backend tests,
+135 vitest, `svelte-check` 0 errors / 0 warnings, `vite build` clean — then live, twice: by curl (a
+one-click POST wrote the row, `PATCH` set 900s and the aggregate moved, the confession appeared in
+`/api/feed` and vanished after `logs_public:false` while `/api/stats` still counted it, a check
+without a lock 409'd, a second check that day 429'd, a self-attestation 403'd, undo 204'd) and in a
+real browser session signed in as a throwaway account: the WASTE A LOAD button recorded on click,
+the counter moved 202 → 203, the duration chip saved, the refusal read *"WLWs and WLDs are one way:
+a whiteboi who cums cannot claim a denial"*, and UNDO took the counter back.
+
+**The browser found what the tests could not.** A refused second attempt used to clear `recorded`
+before the request, so the denial that the server correctly rejected also wiped the undo card for
+the log that *had* landed — the one moment the card matters. `logNow()` now replaces `recorded`
+only on success and leaves it alone on failure; re-proved live afterwards (waste → card → denied →
+refusal shown, card and undo both still there → undo → counter back to 203).
+
 ## 2026-10-29 — exclusivity had a direction all along, and the code had it the wrong one
 
 The owner: *"I should be able to click waste load right after denial, but not the other way

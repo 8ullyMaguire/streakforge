@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { api } from '$lib/api';
+	import { api, ApiRequestError } from '$lib/api';
+	import { pushToast } from '$lib/toasts.svelte';
+	import { TTC_CHIPS, parseDurationInput } from '$lib/duration';
 	import type { Leaderboard, UserOfTheDay, PublicFeedItem, TodayCounts } from '$lib/types';
 	import { timeAgo, formatCount } from '$lib/api';
 	import { onMount } from 'svelte';
@@ -63,6 +65,87 @@
 	function fmtScore(n: number): string {
 		return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 	}
+
+	// ---- ONE CLICK (owner, 2026-10-29) ------------------------------------
+	// "logging waste/denial from landing page should be a single click rather than
+	// multiple". So: one POST, no confirm page, no drill gate, no navigation. The
+	// two things a person might still want to say — how long it took, and "that was
+	// a mistake" — are offered AFTER the fact, inline, because both are optional and
+	// neither should stand between a click and its record.
+	let logging = $state(false);
+	let recorded = $state<{ id: number; kind: 'habit' | 'denial' } | null>(null);
+	let logError = $state<string | null>(null);
+	let ttcOpen = $state(false);
+	let ttcCustom = $state('');
+	let ttcSaved = $state<number | null>(null);
+	let undoing = $state(false);
+
+	async function logNow(kind: 'habit' | 'denial') {
+		if (logging) return;
+		logging = true;
+		logError = null;
+		// Deliberately NOT clearing `recorded` here. A refused second attempt (a
+		// denial after a waste, say) used to wipe the undo card belonging to the log
+		// that DID land — the one case where the follow-up matters most. It is
+		// replaced on success and left alone on failure.
+		try {
+			const res = await api.logHabit(undefined, kind);
+			// The id of the row just written is the newest one in the caller's own
+			// recent logs — no extra endpoint, and it is theirs by construction.
+			recorded = { id: Number(res.stats.recent_logs[0]?.id ?? 0), kind };
+			ttcOpen = false;
+			ttcSaved = null;
+			pushToast(kind === 'denial' ? 'Denial recorded.' : 'Load recorded.', 'success');
+			// The counters are public and only ever move forward: bump locally so the
+			// page does not need a reload to agree with what the server just did.
+			if (kind === 'denial') denied = (denied ?? 0) + 1;
+			else total = (total ?? 0) + 1;
+		} catch (e) {
+			// 429 here is a rule, not a failure: the server's sentence names the clock.
+			logError = e instanceof ApiRequestError || e instanceof Error ? e.message : 'Could not record that.';
+			pushToast(logError ?? 'Could not record that.', 'error');
+		} finally {
+			logging = false;
+		}
+	}
+
+	async function saveTtc(secs: number | null) {
+		if (!recorded || recorded.id === 0) return;
+		try {
+			await api.patchLog(recorded.id, secs);
+			ttcSaved = secs;
+			ttcOpen = false;
+			pushToast(secs === null ? 'Duration cleared.' : 'Duration saved.', 'success');
+		} catch (e) {
+			pushToast(e instanceof Error ? e.message : 'Could not save that.', 'error');
+		}
+	}
+
+	function submitCustom() {
+		const secs = parseDurationInput(ttcCustom);
+		if (secs === null) {
+			pushToast('That is not a duration — try 12:30, 20m or 1h.', 'error');
+			return;
+		}
+		void saveTtc(secs);
+	}
+
+	async function undo() {
+		if (!recorded || recorded.id === 0) return;
+		undoing = true;
+		try {
+			await api.deleteLog(recorded.id);
+			if (recorded.kind === 'denial') denied = Math.max(0, (denied ?? 1) - 1);
+			else total = Math.max(0, (total ?? 1) - 1);
+			recorded = null;
+			ttcSaved = null;
+			pushToast('Undone. As if it never happened.', 'success');
+		} catch (e) {
+			pushToast(e instanceof Error ? e.message : 'Could not undo that.', 'error');
+		} finally {
+			undoing = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -99,19 +182,78 @@
 
 	<div class="cta-row">
 		{#if signedIn}
-			<a href="/dashboard" class="btn btn-red btn-lg">WASTE A LOAD</a>
+			<button class="btn btn-red btn-lg" onclick={() => logNow('habit')} disabled={logging}>
+				{logging ? 'RECORDING…' : 'WASTE A LOAD'}
+			</button>
+			<button class="btn btn-ghost btn-lg" onclick={() => logNow('denial')} disabled={logging}>
+				I DENIED
+			</button>
 		{:else}
-			<a href="/login" class="btn btn-red btn-lg">KNOW YOUR PLACE</a>
+			<a href="/login?next=/dashboard" class="btn btn-red btn-lg">KNOW YOUR PLACE</a>
+			<a href="/leaderboard" class="btn btn-ghost btn-lg">VIEW THE BOARD</a>
 		{/if}
-		<a href="/leaderboard" class="btn btn-ghost btn-lg">VIEW THE BOARD</a>
 	</div>
-	<p style="color:var(--text-dim);font-size:13px;margin-top:14px;">
-		{#if signedIn}
-			Waste only when permitted. The board remembers.
-		{:else}
+
+	{#if signedIn}
+		<p style="color:var(--text-dim);font-size:13px;margin-top:14px;">
+			One click records it. A waste spends the day's denial; a denial never spends a waste.
+		</p>
+	{:else}
+		<p style="color:var(--text-dim);font-size:13px;margin-top:14px;">
 			Create an account. Own your submission. Deny harder.
-		{/if}
-	</p>
+		</p>
+	{/if}
+
+	{#if logError}
+		<div
+			class="card"
+			style="max-width:520px;margin:16px auto 0;padding:12px 14px;font-size:13px;color:var(--red-soft);border-color:rgba(200,30,30,0.35);text-align:left;"
+		>
+			{logError}
+		</div>
+	{/if}
+
+	{#if recorded}
+		<div class="card" style="max-width:520px;margin:16px auto 0;padding:14px 16px;text-align:left;">
+			<div style="font-size:12px;letter-spacing:0.14em;color:var(--green);">
+				RECORDED — {recorded.kind === 'denial' ? 'LOAD DENIED' : 'LOAD WASTED'}
+			</div>
+			{#if !ttcOpen && ttcSaved === null}
+				<div style="margin-top:10px;font-size:13px;color:var(--text-dim);">
+					How long did it take, start to release?
+					<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
+						{#each TTC_CHIPS as chip (chip.secs)}
+							<button class="btn btn-ghost" style="padding:4px 12px;font-size:12px;" onclick={() => saveTtc(chip.secs)}>
+								{chip.label}
+							</button>
+						{/each}
+						<button class="btn btn-ghost" style="padding:4px 12px;font-size:12px;" onclick={() => (ttcOpen = true)}>
+							other…
+						</button>
+					</div>
+				</div>
+			{:else if ttcOpen}
+				<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+					<input
+						placeholder="12:30 or 20m"
+						bind:value={ttcCustom}
+						style="flex:1;min-width:120px;"
+						onkeydown={(e) => e.key === 'Enter' && submitCustom()}
+					/>
+					<button class="btn btn-red" style="padding:4px 12px;font-size:12px;" onclick={submitCustom}>SAVE</button>
+				</div>
+			{:else}
+				<div style="margin-top:10px;font-size:13px;color:var(--text-dim);">
+					Duration saved{ttcSaved ? ` (${ttcSaved}s)` : ''}.
+				</div>
+			{/if}
+			<div style="margin-top:12px;">
+				<button class="btn btn-ghost" style="padding:4px 12px;font-size:12px;" onclick={undo} disabled={undoing}>
+					{undoing ? 'UNDOING…' : 'UNDO (15 min)'}
+				</button>
+			</div>
+		</div>
+	{/if}
 </section>
 
 {#if recentFeed.length > 0}
@@ -201,7 +343,7 @@
 	{#if recentFeed.length > 0}
 		<h2 style="font-size:18px;letter-spacing:0.08em;margin:28px 0 6px;">RECENT ACTIVITY</h2>
 		<p style="color:var(--text-dim);font-size:12px;margin:0 0 12px;">
-			Notes stay private. This is what happened, not what was written.
+			Confessions are public by default — turn yours off in <a href="/settings">settings</a>.
 		</p>
 		<div class="card" style="padding:4px 18px;">
 			{#each recentFeed as item}

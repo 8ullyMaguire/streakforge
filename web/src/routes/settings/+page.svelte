@@ -9,6 +9,10 @@
 	let displayName = $state('');
 	let avatarUrl = $state('');
 	let socialUrl = $state('');
+	// Confessions are public by default (owner, 2026-10-29). The switch is the only
+	// thing standing between "the site publishes what I write" and "it does not", so
+	// it is stated in full here rather than as a bare checkbox label.
+	let logsPublic = $state(true);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
@@ -19,6 +23,8 @@
 			displayName = me.display_name ?? '';
 			avatarUrl = me.avatar_url ?? '';
 			socialUrl = me.social_url ?? '';
+			const p = await api.profile(me.username);
+			logsPublic = p.logs_public;
 		} catch (e) {
 			if (e instanceof ApiRequestError && e.status === 401) {
 				window.location.href = '/login';
@@ -36,7 +42,8 @@
 				username: username.trim() || undefined,
 				display_name: displayName.trim() || undefined,
 				avatar_url: avatarUrl.trim() || undefined,
-				social_url: socialUrl.trim() || undefined
+				social_url: socialUrl.trim() || undefined,
+				logs_public: logsPublic
 			});
 			pushToast('Profile updated.');
 			if (me) me.username = p.username;
@@ -79,6 +86,24 @@
 						alt=""
 					/>
 				</div>
+			</div>
+			<div class="form-row">
+				<label for="logs-public">Confessions</label>
+				<label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.5;">
+					<input
+						id="logs-public"
+						type="checkbox"
+						bind:checked={logsPublic}
+						style="margin-top:3px;width:auto;"
+					/>
+					<span>
+						<b>Publish my confessions in the public feed.</b>
+						<span style="color:var(--text-dim);">
+							On by default. Turn it off and your logs stay yours — the rows and your
+							score are untouched, they just stop appearing on the feed.
+						</span>
+					</span>
+				</label>
 			</div>
 			<div class="form-row">
 				<label for="social">Social URL</label>

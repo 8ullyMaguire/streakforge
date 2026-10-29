@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import LogButton from '$lib/components/LogButton.svelte';
 	import StreakCalendar from '$lib/components/StreakCalendar.svelte';
-	import { budgetLabel } from '$lib/countdown';
+	import { budgetLabel, formatCountdown } from '$lib/countdown';
 	import { decayNotice, decayStyle } from '$lib/decay';
 	import { todayLine } from '$lib/today';
 	import type { TodayCounts } from '$lib/today';
@@ -109,6 +109,25 @@
 		</p>
 
 		<!--
+			STREAK AT RISK. The multiplier only pays consecutive days, and a member who
+			has already earned one has no way of noticing that today's silence will cost
+			it at midnight. This is the cheapest retention mechanic on the site: no
+			transport, no new table, just the clock the server already sends.
+		-->
+		{#if stats.at_risk.at_risk}
+			<div
+				class="card"
+				style="margin:0 0 18px;padding:12px 14px;border-color:rgba(212,175,55,0.45);font-size:13px;line-height:1.55;"
+			>
+				<span style="color:var(--gold);font-weight:600;">YOUR ×{fmtScore(stats.at_risk.multiplier)} IS AT RISK.</span>
+				<span style="color:var(--text-dim);">
+					{stats.at_risk.streak} days of showing up, and today is not one of them yet —
+					it dies at 00:00 UTC. {formatCountdown(stats.at_risk.secs_left)} left.
+				</span>
+			</div>
+		{/if}
+
+		<!--
 			Item 10: the community's day, not the user's. This is the only number on
 			this page that is about other people, and it is deliberately a live read
 			of the same count the KPI page publishes rather than a stored copy.
@@ -192,6 +211,54 @@
 				<div class="label">All-time</div>
 				<div class="value">{stats.alltime_count}</div>
 			</div>
+		</div>
+
+		<!--
+			Each kind's own streak. One combined number hid the one-way rule that the
+			server enforces (a waste spends the day's denial; a denial never spends a
+			waste), and a rule nobody can see reads as a bug when it bites.
+		-->
+		<div class="stat-grid" style="margin-bottom:20px;">
+			<div class="stat-card">
+				<div class="label">WLW streak</div>
+				<div class="value red">{stats.kind_streaks.habit}<span style="font-size:14px;color:var(--text-dim);">d</span></div>
+			</div>
+			<div class="stat-card">
+				<div class="label">WLD streak</div>
+				<div class="value gold">{stats.kind_streaks.denial}<span style="font-size:14px;color:var(--text-dim);">d</span></div>
+			</div>
+			<div class="stat-card">
+				<div class="label">Drill streak</div>
+				<div class="value green">{stats.kind_streaks.affirmation}<span style="font-size:14px;color:var(--text-dim);">d</span></div>
+			</div>
+		</div>
+
+		<!--
+			The multiplier tiers, as progress rather than a mystery: the thresholds are
+			the ones `devotion_multiplier` actually pays, sent by the server so the page
+			cannot promise a number the SQL will not give.
+		-->
+		<div class="card" style="margin-bottom:24px;padding:14px 16px;">
+			<div style="font-size:11px;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:8px;">
+				MULTIPLIER MILESTONES
+			</div>
+			<div style="display:flex;gap:8px;flex-wrap:wrap;">
+				{#each stats.milestones as m (m.days)}
+					<div
+						style="flex:1;min-width:96px;padding:8px 10px;border:1px solid {m.reached ? 'rgba(40,160,90,0.5)' : 'var(--border)'};border-radius:6px;"
+					>
+						<div style="font-size:11px;color:var(--text-dim);">{m.days} days</div>
+						<div style="font-family:var(--font-mono);font-size:16px;color:{m.reached ? 'var(--green)' : 'var(--text-dim)'};">
+							×{fmtScore(m.multiplier)}
+						</div>
+					</div>
+				{/each}
+			</div>
+			{#if stats.at_risk.next_tier_in !== null}
+				<div style="font-size:12px;color:var(--text-dim);margin-top:8px;">
+					{stats.at_risk.next_tier_in} more day{stats.at_risk.next_tier_in === 1 ? '' : 's'} of showing up to the next tier.
+				</div>
+			{/if}
 		</div>
 
 		<div class="card" style="margin-bottom:24px;">

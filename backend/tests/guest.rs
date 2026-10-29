@@ -533,3 +533,116 @@ async fn a_zero_limit_means_the_door_is_shut(pool: PgPool) {
     assert_eq!(status["enabled"], false);
     assert_eq!(status["at_cap"], false, "at_cap is about the cap, not the switch");
 }
+
+/// The cage rows are the guest's own tenure, so they fold; a vote about someone
+/// else's content does not, because moving it would let one person cast the same
+/// judgement twice under two names.
+///
+/// The attestation and the flag are inserted directly: both endpoints require trust
+/// level 1 and a guest is level 0 by definition, so the API cannot produce these
+/// rows. That is the point of testing the fold itself — it must handle every column
+/// that references `profiles(id)`, reachable or not.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_fold_moves_cage_tenure_and_leaves_votes_with_the_tombstone(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let cookie = a_guest(&app).await;
+    let guest_id: uuid::Uuid = sqlx::query_scalar("select id from profiles where is_guest")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // The guest's own cage: a lock and a check with a peer-verified hour.
+    let res = call(&app, Method::POST, "/api/lock", Some(&cookie), None).await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let res = call(
+        &app,
+        Method::POST,
+        "/api/cage-check",
+        Some(&cookie),
+        Some(json!({"note": "still locked"})),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let check_id: i64 = sqlx::query_scalar("select id from cage_checks where user_id = $1")
+        .bind(guest_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("update cage_checks set status = 'verified', claimed_secs = 7200 where id = $1")
+        .bind(check_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Someone else's check, attested by the guest, and a flag the guest raised.
+    let other: uuid::Uuid =
+        sqlx::query_scalar("insert into profiles (username) values ('somebody') returning id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let other_check: i64 = sqlx::query_scalar(
+        "insert into cage_checks (user_id, seal_code, claimed_secs) values ($1, 'deadbeef', 60) returning id",
+    )
+    .bind(other)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "insert into cage_attestations (check_id, attester_id, verdict) values ($1, $2, 'confirm')",
+    )
+    .bind(other_check)
+    .bind(guest_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("insert into flags (target_kind, target_id, reporter_id, reason) values ('cage_check', $1, $2, 'spam')")
+        .bind(other_check)
+        .bind(guest_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = call(
+        &app,
+        Method::POST,
+        "/api/auth/register",
+        Some(&cookie),
+        Some(credentials("cageconvert")),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED, "the fold must not refuse");
+    let account_id = json_of(res).await["id"].as_str().unwrap().to_string();
+
+    let checks: i64 = sqlx::query_scalar("select count(*) from cage_checks where user_id = $1::uuid")
+        .bind(&account_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(checks, 1, "the cage check came with the account");
+
+    let attests: i64 =
+        sqlx::query_scalar("select count(*) from cage_attestations where attester_id = $1::uuid")
+            .bind(&account_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(attests, 1, "and so did the attestation: it counts towards tenure");
+
+    let flags: i64 = sqlx::query_scalar("select count(*) from flags where reporter_id = $1")
+        .bind(guest_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        flags, 1,
+        "the flag stays with the identity that raised it, so one person cannot vote twice"
+    );
+
+    // The hours the guest earned are now the account's, verified included.
+    let (verified,): (i64,) = sqlx::query_as("select verified_secs::bigint from cage_check_hours($1::uuid)")
+        .bind(&account_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(verified, 7_200);
+}

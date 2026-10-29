@@ -64,6 +64,11 @@ pub struct LogRequest {
     pub note: Option<String>,
     #[serde(default)]
     pub kind: Option<String>,
+    /// Owner's definition (2026-10-29): how long the session ran, from starting to
+    /// release. Optional on every path — the one-click landing button must not
+    /// demand a number, and an empty report is not a missing value to guess at.
+    #[serde(default)]
+    pub time_to_cum_secs: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -144,8 +149,51 @@ pub struct StatsResponse {
     /// a recorded waste blocks a denial for the rest of the UTC day. Never true
     /// for a waste (a denial does not block one) or for a drill.
     pub blocked_by_exclusivity: bool,
+    /// The caller's own time-to-cum numbers (owner's definition: start → release).
+    pub time_to_cum: TimeToCumMine,
+    /// Each kind's exclusive streak, side by side — the one-way rule made legible.
+    pub kind_streaks: KindStreaks,
+    /// The multiplier tiers, with which ones the run has already reached.
+    pub milestones: Vec<MilestoneTier>,
+    /// True when skipping today costs the multiplier the member already earned.
+    pub at_risk: AtRisk,
     /// Whiteboi Devotion Index for this user (all-time), decomposed.
     pub devotion: DevotionIndexResponse,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TimeToCumMine {
+    pub samples: i64,
+    pub avg_secs: f64,
+    pub median_secs: f64,
+    pub min_secs: i64,
+    pub max_secs: i64,
+    pub last_secs: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct KindStreaks {
+    pub habit: i64,
+    pub denial: i64,
+    pub affirmation: i64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct MilestoneTier {
+    pub days: i64,
+    pub multiplier: f64,
+    pub reached: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct AtRisk {
+    /// The run is worth something today and today has no log in it: miss it and the
+    /// multiplier falls back to 1.0 at UTC midnight.
+    pub at_risk: bool,
+    pub secs_left: i64,
+    pub multiplier: f64,
+    pub streak: i64,
+    pub next_tier_in: Option<i64>,
 }
 
 /// Score = ((WLW + WLD + Game Bonus) x Score Multiplier) - Racism Penalty.
@@ -200,6 +248,13 @@ pub struct PublicFeedItem {
     pub username: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
+    /// 'habit' or 'denial' — the feed carries both since 2026-10-29; a denial is
+    /// the 10x event and hiding it from the square was a hole, not a policy.
+    pub kind: String,
+    /// The confession. Public by default (owner, 2026-10-29) with a per-profile
+    /// opt-out; the SQL decides, so this layer cannot leak what the reader's setting
+    /// excludes.
+    pub note: Option<String>,
     pub logged_at: String,
 }
 
@@ -269,6 +324,9 @@ pub struct ProfileResponse {
     pub today_count: i64,
     pub week_count: i64,
     pub alltime_count: i64,
+    /// Whether this member's confessions appear in the public feed. True by default
+    /// (owner, 2026-10-29); the switch lives in settings.
+    pub logs_public: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -277,6 +335,7 @@ pub struct UpdateProfileRequest {
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
     pub social_url: Option<String>,
+    pub logs_public: Option<bool>,
 }
 
 // ---- Rate limiting ----
@@ -460,18 +519,127 @@ pub async fn log_habit(
         return Err(ApiError::bad_request("Note must be 140 characters or fewer"));
     }
     let kind = parse_kind(body.kind.as_deref());
+    let ttc = match body.time_to_cum_secs {
+        None => None,
+        Some(v) if (0..=86_400).contains(&v) => Some(v as i32),
+        Some(_) => {
+            return Err(ApiError::bad_request(
+                "time_to_cum_secs must be between 0 and 86400",
+            ))
+        }
+    };
 
     check_rate_limits(&state.pool, user.id, kind, state.cfg.wlw_daily_limit).await?;
 
-    sqlx::query("insert into habit_logs (user_id, note, kind) values ($1, $2, $3)")
+    sqlx::query("insert into habit_logs (user_id, note, kind, time_to_cum_secs) values ($1, $2, $3, $4)")
         .bind(user.id)
         .bind(note)
         .bind(kind.as_str())
+        .bind(ttc)
         .execute(&state.pool)
         .await?;
 
     let stats = compute_stats(&state.pool, user.id, kind, state.cfg.wlw_daily_limit).await?;
     Ok((StatusCode::CREATED, Json(LogResponse { stats })))
+}
+
+/// How long after writing a log its author may still edit or remove it.
+///
+/// Fifteen minutes is the undo window, and it exists because the landing page now
+/// logs on a single click: a rule that makes a mis-click permanent would be a good
+/// reason not to offer the single click at all.
+pub const LOG_EDIT_WINDOW_SECS: i64 = 900;
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateLogRequest {
+    /// Sets the duration, or clears it when null. PATCH is a set, not a merge: the
+    /// only field it carries is this one.
+    #[serde(default)]
+    pub time_to_cum_secs: Option<i64>,
+}
+
+/// Load a log the caller owns and is still allowed to touch, or fail with the
+/// reason the UI needs to print.
+async fn owned_recent_log(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+    log_id: i64,
+) -> ApiResult<(uuid::Uuid, OffsetDateTime)> {
+    let row: Option<(uuid::Uuid, OffsetDateTime)> =
+        sqlx::query_as("select user_id, logged_at from habit_logs where id = $1")
+            .bind(log_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some((owner, logged_at)) = row else {
+        return Err(ApiError::not_found("No such log"));
+    };
+    if owner != user_id {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "That log is not yours",
+        ));
+    }
+    let age = (OffsetDateTime::now_utc() - logged_at).whole_seconds();
+    if age > LOG_EDIT_WINDOW_SECS {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            format!(
+                "Logs can only be changed in the first {} minutes",
+                LOG_EDIT_WINDOW_SECS / 60
+            ),
+        ));
+    }
+    Ok((owner, logged_at))
+}
+
+/// PATCH /api/logs/{id} — the post-click half of the one-click flow: the waste is
+/// already recorded, this adds the number without a second form in the way.
+pub async fn update_log(
+    State(state): State<AppState>,
+    session: Session,
+    Path(log_id): Path<i64>,
+    Json(body): Json<UpdateLogRequest>,
+) -> ApiResult<Json<LogResponse>> {
+    let user = require_user(&session).await?;
+    crate::guest::guard_write(&state, &user).await?;
+    owned_recent_log(&state.pool, user.id, log_id).await?;
+
+    let ttc = match body.time_to_cum_secs {
+        None => None,
+        Some(v) if (0..=86_400).contains(&v) => Some(v as i32),
+        Some(_) => {
+            return Err(ApiError::bad_request(
+                "time_to_cum_secs must be between 0 and 86400",
+            ))
+        }
+    };
+    sqlx::query("update habit_logs set time_to_cum_secs = $2 where id = $1")
+        .bind(log_id)
+        .bind(ttc)
+        .execute(&state.pool)
+        .await?;
+
+    let stats = compute_stats(&state.pool, user.id, LogKind::Habit, state.cfg.wlw_daily_limit).await?;
+    Ok(Json(LogResponse { stats }))
+}
+
+/// DELETE /api/logs/{id} — undo, inside the same window.
+///
+/// The row is really deleted, not hidden: undo means "this did not happen", and a
+/// tombstone would keep it in the daily budget the user is trying to get back.
+pub async fn delete_log(
+    State(state): State<AppState>,
+    session: Session,
+    Path(log_id): Path<i64>,
+) -> ApiResult<StatusCode> {
+    let user = require_user(&session).await?;
+    crate::guest::guard_write(&state, &user).await?;
+    owned_recent_log(&state.pool, user.id, log_id).await?;
+    sqlx::query("delete from habit_logs where id = $1")
+        .bind(log_id)
+        .execute(&state.pool)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn get_stats(
@@ -560,7 +728,7 @@ pub async fn get_lock(
     Ok(Json(lock))
 }
 
-async fn lock_info(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<LockInfoResponse> {
+pub async fn lock_info(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<LockInfoResponse> {
     let (locked, locked_at, current_dur, total_locked, longest): (
         bool,
         Option<OffsetDateTime>,
@@ -714,6 +882,71 @@ async fn compute_stats(
     .fetch_one(pool)
     .await?;
 
+    // Per-kind streaks, so the one-way exclusivity rule is visible instead of
+    // inferred from a single combined number.
+    let (habit_streak, denial_streak, affirmation_streak): (i64, i64, i64) = sqlx::query_as(
+        "select
+           (select current_streak from user_streak_kind($1, 'habit'))::bigint,
+           (select current_streak from user_streak_kind($1, 'denial'))::bigint,
+           (select current_streak from user_streak_kind($1, 'affirmation'))::bigint",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+
+    let (participation_streak,): (i64,) =
+        sqlx::query_as("select current_streak::bigint from user_participation_streak($1)")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await?;
+    let logged_today: bool = sqlx::query_scalar(
+        "select exists(select 1 from habit_logs where user_id = $1 and log_date = (now() at time zone 'utc')::date)",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+
+    let (ttc_samples, ttc_avg, ttc_median, ttc_min, ttc_max, ttc_last): (
+        i64,
+        f64,
+        f64,
+        i32,
+        i32,
+        Option<i32>,
+    ) = sqlx::query_as(
+        "select samples::bigint, avg_secs::float8, median_secs::float8, min_secs, max_secs, last_secs
+         from time_to_cum_stats($1)",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+
+    // The tiers `devotion_multiplier` actually pays, in one place: a UI that invents
+    // its own thresholds is a UI that promises a multiplier the SQL will not give.
+    const TIERS: [(i64, f64); 5] = [(7, 1.25), (14, 1.5), (30, 2.0), (60, 2.5), (100, 3.0)];
+    let milestones: Vec<MilestoneTier> = TIERS
+        .iter()
+        .map(|(days, multiplier)| MilestoneTier {
+            days: *days,
+            multiplier: *multiplier,
+            reached: participation_streak >= *days,
+        })
+        .collect();
+    let secs_left = (next_utc_midnight(now) - now).whole_seconds().max(0);
+    let at_risk = AtRisk {
+        // At risk means: the run is already worth a multiplier, and today is one of
+        // the days that would have to hold it. A member who has logged today is
+        // safe until tomorrow; a member with no multiplier has nothing to lose.
+        at_risk: mult > 1.0 && participation_streak > 0 && !logged_today,
+        secs_left,
+        multiplier: mult,
+        streak: participation_streak,
+        next_tier_in: TIERS
+            .iter()
+            .find(|(days, _)| *days > participation_streak)
+            .map(|(days, _)| *days - participation_streak),
+    };
+
     Ok(StatsResponse {
         today_count,
         current_streak,
@@ -729,6 +962,21 @@ async fn compute_stats(
         next_allowed_in_secs: next_in_secs,
         secs_until_reset,
         blocked_by_exclusivity,
+        time_to_cum: TimeToCumMine {
+            samples: ttc_samples,
+            avg_secs: ttc_avg,
+            median_secs: ttc_median,
+            min_secs: ttc_min as i64,
+            max_secs: ttc_max as i64,
+            last_secs: ttc_last.map(|v| v as i64),
+        },
+        kind_streaks: KindStreaks {
+            habit: habit_streak,
+            denial: denial_streak,
+            affirmation: affirmation_streak,
+        },
+        milestones,
+        at_risk,
         devotion: DevotionIndexResponse {
             wlw,
             wld,
@@ -1080,25 +1328,36 @@ pub async fn get_feed(
     let limit = params.limit.unwrap_or(50).clamp(1, 100);
     let cursor = params.cursor.unwrap_or(0);
     // Named columns, not `select *`: the function's OUT list is what the public
-    // sees, and this query is the second place that decides. Both now agree that
-    // a note is not public.
-    let rows: Vec<(i64, uuid::Uuid, String, Option<String>, Option<String>, OffsetDateTime)> =
-        sqlx::query_as(
-            "select id, user_id, username, display_name, avatar_url, logged_at
+    // sees, and this query is the second place that decides. Both agree that a note
+    // is public when its author left `logs_public` on (2026-10-29) — the decision
+    // lives in `activity_feed`, so this layer cannot publish past the setting.
+    let rows: Vec<(
+        i64,
+        uuid::Uuid,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        OffsetDateTime,
+    )> = sqlx::query_as(
+        "select id, user_id, username, display_name, avatar_url, kind, note, logged_at
              from activity_feed($1, $2::int)",
-        )
-        .bind(cursor)
-        .bind(limit)
-        .fetch_all(&state.pool)
-        .await?;
+    )
+    .bind(cursor)
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await?;
     let items: Vec<PublicFeedItem> = rows
         .into_iter()
-        .map(|(id, uid, uname, dname, av, ts)| PublicFeedItem {
+        .map(|(id, uid, uname, dname, av, kind, note, ts)| PublicFeedItem {
             id,
             user_id: uid,
             username: uname,
             display_name: dname,
             avatar_url: av,
+            kind,
+            note,
             logged_at: ts.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         })
         .collect();
@@ -1118,14 +1377,14 @@ pub async fn get_profile(
     State(state): State<AppState>,
     Path(username): Path<String>,
 ) -> ApiResult<Json<ProfileResponse>> {
-    let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime)> =
+    let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime, bool)> =
         sqlx::query_as(
-            "select id, username, display_name, avatar_url, social_url, created_at from profiles where username = $1",
+            "select id, username, display_name, avatar_url, social_url, created_at, logs_public from profiles where username = $1",
         )
         .bind(&username)
         .fetch_optional(&state.pool)
         .await?;
-    let Some((id, uname, dname, av, social_url, created)) = row else {
+    let Some((id, uname, dname, av, social_url, created, logs_public)) = row else {
         return Err(ApiError::not_found("Profile not found"));
     };
     let (streak, longest): (i64, i64) = sqlx::query_as("select current_streak::bigint, longest_streak::bigint from user_streak($1)")
@@ -1156,6 +1415,7 @@ pub async fn get_profile(
         today_count,
         week_count,
         alltime_count,
+        logs_public,
     }))
 }
 
@@ -1172,6 +1432,15 @@ pub async fn update_profile(
     let mut display_name = user.display_name.clone();
     let mut avatar_url = user.avatar_url.clone();
     let mut social_url = user.social_url.clone();
+    // Publication is a setting, not a one-way door: whatever it is now, the client
+    // may flip it in the same request that edits anything else.
+    let mut logs_public: bool = sqlx::query_scalar("select logs_public from profiles where id = $1")
+        .bind(user.id)
+        .fetch_one(&state.pool)
+        .await?;
+    if let Some(p) = body.logs_public {
+        logs_public = p;
+    }
 
     if let Some(u) = body.username {
         let u = u.trim().to_string();
@@ -1207,20 +1476,22 @@ pub async fn update_profile(
         social_url = if s.is_empty() { None } else { Some(s) };
     }
 
-    let updated = sqlx::query_as::<_, (uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime)>(
-        "update profiles set username = $1, display_name = $2, avatar_url = $3, social_url = $4, updated_at = now()
-         where id = $5
-         returning id, username, display_name, avatar_url, social_url, created_at",
+    let updated = sqlx::query_as::<_, (uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime, bool)>(
+        "update profiles set username = $1, display_name = $2, avatar_url = $3, social_url = $4,
+                logs_public = $5, updated_at = now()
+         where id = $6
+         returning id, username, display_name, avatar_url, social_url, created_at, logs_public",
     )
     .bind(&username)
     .bind(&display_name)
     .bind(&avatar_url)
     .bind(&social_url)
+    .bind(logs_public)
     .bind(user.id)
     .fetch_optional(&state.pool)
     .await?;
 
-    let Some((id, uname, dname, av, social_url, created)) = updated else {
+    let Some((id, uname, dname, av, social_url, created, logs_public)) = updated else {
         return Err(ApiError::not_found("Profile not found"));
     };
 
@@ -1267,6 +1538,7 @@ pub async fn update_profile(
         today_count,
         week_count,
         alltime_count,
+        logs_public,
     }))
 }
 

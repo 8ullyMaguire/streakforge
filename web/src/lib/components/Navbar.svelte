@@ -67,8 +67,12 @@
 	const links = [
 		{ href: '/dashboard', label: 'MY PLACE' },
 		{ href: '/denial', label: 'DENIAL' },
+		// The cage check and the metrics are the two surfaces the owner asked for on
+		// 2026-10-29; a feature nobody can find is a feature that does not exist.
+		{ href: '/cage', label: 'CAGE' },
 		{ href: '/drill', label: 'DRILL' },
 		{ href: '/leaderboard', label: 'BOARD' },
+		{ href: '/metrics', label: 'NUMBERS' },
 		{ href: '/feed', label: 'FEED' },
 		{ href: '/doctrine', label: 'DOCTRINE' }
 	];

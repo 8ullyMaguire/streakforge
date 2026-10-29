@@ -94,6 +94,23 @@ pub async fn build_router(cfg: &Config, pool: PgPool) -> Result<Router, sqlx::Er
         // learning it from a failed click.
         .route("/guest", get(crate::guest::status).post(crate::guest::mint))
         .route("/logs", post(crate::api::log_habit))
+        // The undo/edit window: the landing page logs on ONE click, so the same
+        // fifteen minutes have to carry both "that number was wrong" and "that
+        // click was wrong".
+        .route(
+            "/logs/{id}",
+            patch(crate::api::update_log).delete(crate::api::delete_log),
+        )
+        .route("/cage", get(crate::cage::get_cage))
+        .route("/cage-check", post(crate::cage::create_check))
+        .route("/cage-check/queue", get(crate::cage::queue))
+        .route("/cage-check/{id}/attest", post(crate::cage::attest))
+        .route("/metrics/time-to-cum", get(crate::metrics::time_to_cum))
+        .route("/metrics/boards", get(crate::metrics::boards))
+        .route("/trust", get(crate::moderation::get_trust))
+        .route("/flags", post(crate::moderation::flag))
+        .route("/moderation/queue", get(crate::moderation::queue))
+        .route("/moderation/action", post(crate::moderation::action))
         .route("/stats", get(crate::api::get_stats))
         .route("/drill", get(crate::api::get_drill))
         .route("/denial", get(crate::api::get_denial))

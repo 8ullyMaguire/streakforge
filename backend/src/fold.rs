@@ -27,7 +27,22 @@ use uuid::Uuid;
 /// Every entry here must also appear in the `pg_constraint` walk below, or the walk
 /// will report it as unhandled — that duplication is deliberate: the list is what
 /// the code does, and the walk is what proves the list is still complete.
-const FOLDED: &[(&str, &str)] = &[("habit_logs", "user_id"), ("lock_sessions", "user_id")];
+const FOLDED: &[(&str, &str)] = &[
+    ("habit_logs", "user_id"),
+    ("lock_sessions", "user_id"),
+    // A cage check is a claim about your own cage, and the hours it earns are yours:
+    // dropping them at registration would answer "where did my verified time go"
+    // with silence. A fold collision is impossible here — the account was created in
+    // this same transaction and cannot already hold a check for the guest's date.
+    ("cage_checks", "user_id"),
+    // Attestations are votes a guest cast on OTHER people's checks, and 0016 counts
+    // them towards `contributions`, i.e. towards tenure. The firewall folds tenure
+    // and never score, and dropping these would silently reset a member's progress
+    // to level 1 the moment they registered. So they move; the `unique (check_id,
+    // attester_id)` index cannot collide with an account that did not exist a
+    // statement ago.
+    ("cage_attestations", "attester_id"),
+];
 
 /// Columns that reference `profiles(id)` and are deliberately **not** folded.
 ///
@@ -36,7 +51,19 @@ const FOLDED: &[(&str, &str)] = &[("habit_logs", "user_id"), ("lock_sessions", "
 ///   the standard's firewall forbids one layer up; the row keeps pointing at the
 ///   tombstone, which now says where the history went.
 /// * `profiles.merged_into` — the tombstone's own pointer, written by this fold.
-const EXEMPT: &[(&str, &str)] = &[("audit_log", "profile_id"), ("profiles", "merged_into")];
+/// * `flags.reporter_id` — a flag is an opinion about someone else's content, not
+///   the guest's own. Moving it would let a person register and re-cast the verdict
+///   under a new name (the unique index is per reporter). It keeps pointing at the
+///   tombstone, whose trust level is 0, so it still counts as one untrusted voice.
+/// * `moderation_actions.actor_id` — an action log. It records who acted; rewriting
+///   it would move the record of a moderation decision onto an account that did not
+///   make it, which is the audit-laundering case `audit_log` exists to prevent.
+const EXEMPT: &[(&str, &str)] = &[
+    ("audit_log", "profile_id"),
+    ("profiles", "merged_into"),
+    ("flags", "reporter_id"),
+    ("moderation_actions", "actor_id"),
+];
 
 #[derive(Debug)]
 pub enum FoldError {

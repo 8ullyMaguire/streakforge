@@ -13,6 +13,9 @@ export interface Profile {
 	today_count: number;
 	week_count: number;
 	alltime_count: number;
+	/** Whether this member's confessions appear in the public feed. True by
+	 *  default; the switch lives in settings. */
+	logs_public: boolean;
 }
 
 export interface UserOfTheDay {
@@ -51,17 +54,20 @@ export interface LeaderboardEntry {
 	last_log_at: string | null;
 }
 
-/** One entry of the PUBLIC feed: deliberately no `note`.
+/** One entry of the PUBLIC feed.
  *
- *  The confession box is private and only the author ever reads a note back
- *  (via `Stats.recent_logs`, which is their own). The backend's `activity_feed()`
- *  does not return a note column at all, so this type cannot carry one. */
+ *  Since 2026-10-29 a confession is PUBLIC by default and its author can turn that
+ *  off in settings. `note` is therefore present-or-absent depending on that switch,
+ *  and `activity_feed()` — not this type — is what enforces it. `kind` says which
+ *  event it was: a waste or a denial (drills never appear). */
 export interface PublicFeedItem {
 	id: string;
 	user_id: string;
 	username: string;
 	display_name: string | null;
 	avatar_url: string | null;
+	kind: 'habit' | 'denial';
+	note: string | null;
 	logged_at: string;
 }
 
@@ -120,7 +126,127 @@ export interface Stats {
 	secs_until_reset: number;
 	/** true when the OTHER exclusive kind already ran today */
 	blocked_by_exclusivity: boolean;
+	/** The caller's own time-to-cum figures — the owner's definition: how long the
+	 *  session ran, from starting to release. */
+	time_to_cum: TimeToCumMine;
+	/** Each kind's own exclusive streak, side by side. */
+	kind_streaks: { habit: number; denial: number; affirmation: number };
+	/** The multiplier tiers with which ones this run already reached. */
+	milestones: MilestoneTier[];
+	/** True when skipping today costs the multiplier already earned. */
+	at_risk: AtRisk;
 	devotion: DevotionIndex;
+}
+
+export interface TimeToCumMine {
+	samples: number;
+	avg_secs: number;
+	median_secs: number;
+	min_secs: number;
+	max_secs: number;
+	last_secs: number | null;
+}
+
+export interface MilestoneTier {
+	days: number;
+	multiplier: number;
+	reached: boolean;
+}
+
+export interface AtRisk {
+	at_risk: boolean;
+	secs_left: number;
+	multiplier: number;
+	streak: number;
+	next_tier_in: number | null;
+}
+
+export interface CageMetrics {
+	checks: number;
+	claimed_secs: number;
+	verified_secs: number;
+	pending_secs: number;
+	disputed_secs: number;
+	verification_rate: number;
+	avg_secs: number;
+	current_verified_day_streak: number;
+	longest_verified_day_streak: number;
+	last_check_at: string | null;
+}
+
+export interface CageCheck {
+	id: number;
+	username: string;
+	avatar_url: string | null;
+	checked_at: string;
+	seal_code: string;
+	note: string | null;
+	claimed_secs: number;
+	status: 'pending' | 'verified' | 'disputed';
+	confirms: number;
+	disputes: number;
+	my_verdict: 'confirm' | 'dispute' | null;
+}
+
+export interface CageResponse {
+	lock: LockInfo;
+	metrics: CageMetrics;
+	today: CageCheck | null;
+	recent: CageCheck[];
+	queue_count: number;
+	total_verified_secs: number;
+}
+
+export interface TimeToCumAggregate {
+	samples: number;
+	avg_secs: number;
+	median_secs: number;
+	avg_of_user_avgs_secs: number;
+	reporters: number;
+}
+
+export interface EdgeEntry {
+	username: string;
+	avatar_url: string | null;
+	samples: number;
+	avg_secs: number;
+}
+
+export interface TimeToCumResponse {
+	aggregate: TimeToCumAggregate;
+	mine: TimeToCumMine | null;
+	board: EdgeEntry[];
+}
+
+export interface BoardsResponse {
+	most_denied: { username: string; avatar_url: string | null; denials: number }[];
+	consistency: { username: string; avatar_url: string | null; days: number; pct: number }[];
+	locks: {
+		username: string;
+		avatar_url: string | null;
+		current_streak: number;
+		longest_streak: number;
+	}[];
+}
+
+export interface Trust {
+	level: number;
+	active_days: number;
+	contributions: number;
+	upheld_flags: number;
+	next_level_at: number | null;
+	is_leader: boolean;
+}
+
+export interface ModerationQueueItem {
+	target_kind: 'log' | 'cage_check';
+	target_id: number;
+	flags: number;
+	from_tl2: number;
+	hidden: boolean;
+	preview: string | null;
+	author: string | null;
+	first_flag_at: string;
 }
 
 export interface DrillResponse {

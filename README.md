@@ -37,7 +37,9 @@ Plus `STATUS.md` for the living dev-status checklist.
 
 ## Features
 
-- **One-button logging** — large "Log Completion" button on the dashboard.
+- **One-click logging** — the landing page records a waste or a denial in a single
+  click, with the optional duration and a 15-minute undo offered inline afterwards
+  (no confirm page, no drill gate).
 - **Affirmation Drill** — a `/drill` page with a wlw-style big tabular counter,
   a cycling affirmation deck, and a "REPEAT" button. Affirmation reps log under
   a separate `kind` with their own rate-limit budget (1/hr, 5/day), so the drill
@@ -61,10 +63,21 @@ Plus `STATUS.md` for the living dev-status checklist.
   totals, denial rate, affirmations, active (24h) and new (7d) users,
   currently-locked count, all-time lock hours, a 30-day stacked trend chart,
   and the top weekly board. No auth, like the landing counters.
-- **Public activity feed** — reverse-chronological, cursor-paginated. **Activity
-  only: notes are private** and only their author ever reads them back, on their own
-  dashboard. (They used to be published here; see `docs/100_IDEAS.md` #01 and SPEC
-  §7.4.)
+- **Public activity feed** — reverse-chronological, cursor-paginated, carrying both
+  wastes and denials with their `kind`. **Confessions are public by default**; the
+  author can turn that off in settings (`profiles.logs_public`), and `activity_feed()`
+  — not the handler — is what enforces it, so the rows and the score are untouched.
+- **Cage checks, peer-verified** — a `/cage` page: one check per UTC day while a lock
+  is open, an 8-character seal code, and hours that count only once peers attest
+  (2 confirmations, or 1 from a level-3 member). Publishes verified/claimed/pending
+  hours, a verification rate and a verified-day streak — claims are not hours.
+- **Trust levels and quorum moderation** — `/moderation`: Discourse-shaped levels 0–4
+  computed from activity (never stored, except the leader flag); three flags with at
+  least one trusted voice hide content, two restore votes bring it back, leaders can
+  act alone, and every action is written to `moderation_actions`.
+- **Time to cum** — a per-log duration (start of the session to release), with a
+  per-person average, a pooled average *and* an average of per-person averages on
+  `/metrics`, because one heavy logger should not define the site.
 - **A day's budget, a live clock, and a decay warning** — the dashboard shows how many
   logs are left today and when the cadence resets, warns ten days before 30 days of
   silence would wipe the score, and explains the score by its components.
@@ -206,7 +219,9 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | POST   | `/api/auth/login`         | —    | Sign in (bot-dissuaded)              |
 | GET    | `/api/auth/me`            | ✓    | Current session user                 |
 | POST   | `/api/auth/logout`        | ✓    | End session                          |
-| POST   | `/api/logs`               | ✓    | Log a completion (rate-limited, `kind` = habit|affirmation) |
+| POST   | `/api/logs`               | ✓    | Log a completion (rate-limited, `kind` = habit|denial|affirmation, optional `time_to_cum_secs`) |
+| PATCH  | `/api/logs/{id}`          | ✓    | In-window (15 min) duration edit; 403 after     |
+| DELETE | `/api/logs/{id}`          | ✓    | In-window undo; 403 after                         |
 | GET    | `/api/stats`              | ✓    | Personal habit stats + recent logs         |
 | GET    | `/api/drill`              | ✓    | Affirmation drill stats (separate budget)  |
 | GET    | `/api/leaderboard/{period}` | —  | daily / weekly / alltime             |
@@ -214,11 +229,21 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | GET    | `/api/total`              | —    | Total completions (hero counter)     |
 | GET    | `/api/today`              | —    | Today's denials / wastes / distinct loggers (UTC) |
 | GET    | `/api/health`             | —    | `{status, database}`; **503** when the DB cannot answer |
-| GET    | `/api/feed`               | —    | Public feed (cursor + limit) — activity only, no notes |
+| GET    | `/api/feed`               | —    | Public feed (cursor + limit) — `kind`, and `note` when the author is public |
 | GET    | `/api/profile/{username}` | —    | Public profile stats (+ social_url)  |
-| PATCH  | `/api/profile`            | ✓    | Update username/display/avatar/social_url |
+| PATCH  | `/api/profile`            | ✓    | Update username/display/avatar/social_url/logs_public |
 | GET    | `/api/doctrine`          | —    | List doctrine docs                   |
 | GET    | `/api/doctrine/{id}`      | —    | Fetch a doctrine document (markdown) |
+| GET    | `/api/cage`               | ✓    | Lock, cage metrics, today's check, queue size |
+| POST   | `/api/cage-check`         | ✓    | One check per UTC day while locked; returns a seal |
+| GET    | `/api/cage-check/queue`   | ✓    | Others' pending checks to attest (TL ≥ 1) |
+| POST   | `/api/cage-check/{id}/attest` | ✓ | `confirm` / `dispute`; quorum decides |
+| GET    | `/api/metrics/time-to-cum` | —   | Pooled average, median, per-person average, board |
+| GET    | `/api/metrics/boards`     | —   | Most denied, consistency, lock streaks (30d) |
+| GET    | `/api/trust`              | ✓    | Level, active days, contributions, next tier |
+| POST   | `/api/flags`              | ✓    | Flag a log/cage check (TL ≥ 1) |
+| GET    | `/api/moderation/queue`   | ✓    | Flagged targets (TL ≥ 2) |
+| POST   | `/api/moderation/action`  | ✓    | Hide (TL 4) / restore (2 votes or TL 4) |
 
 ## Business Logic
 

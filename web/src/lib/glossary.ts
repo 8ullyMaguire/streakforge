@@ -113,8 +113,8 @@ export const TERMS: GlossaryTerm[] = [
 	{
 		term: 'Note',
 		definition:
-			'A private 140-character confession attached to a log. Only you can read it back, on your own dashboard.',
-		enforced: 'the public feed does not return a note column at all'
+			'A 140-character confession attached to a log. Public by default since 2026-10-29; turn it off in settings and your logs stay out of the feed, scoring unchanged.',
+		enforced: 'activity_feed() publishes notes where profiles.logs_public'
 	},
 	{
 		term: 'Doctrine',

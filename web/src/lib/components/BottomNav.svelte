@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { Home, Ban, PenLine, Trophy, ScrollText } from 'lucide-svelte';
+	import { Home, Ban, Lock, PenLine, Trophy, ScrollText } from 'lucide-svelte';
 
 	const links = [
 		{ href: '/dashboard', label: 'PLACE', icon: Home },
 		{ href: '/denial', label: 'DENY', icon: Ban },
+		{ href: '/cage', label: 'CAGE', icon: Lock },
 		{ href: '/drill', label: 'DRILL', icon: PenLine },
 		{ href: '/leaderboard', label: 'BOARD', icon: Trophy },
 		{ href: '/doctrine', label: 'TEXT', icon: ScrollText }

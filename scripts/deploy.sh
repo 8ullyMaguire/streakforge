@@ -194,7 +194,9 @@ HEALTH_FAIL=0
 # that 404s, is exactly the kind of breakage a "binary is running" check misses.
 for path in "/" "/api/health" "/api/total" "/api/today" "/api/leaderboard/monthly" "/api/leaderboard/alltime" \
             "/api/user-of-the-day" "/api/feed" "/api/doctrine" "/api/kpi" \
-            "/robots.txt" "/sitemap.xml" "/og.png" "/glossary" "/terms" "/log"; do
+            "/api/metrics/time-to-cum" "/api/metrics/boards" \
+            "/robots.txt" "/sitemap.xml" "/og.png" "/glossary" "/terms" "/log" \
+            "/cage" "/metrics" "/moderation"; do
   code=000
   for _ in 1 2 3; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "https://streakforge.polarisocial.xyz$path" || true)

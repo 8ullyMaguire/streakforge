@@ -36,12 +36,15 @@
 		PUBLIC ACTIVITY FEED
 	</h1>
 	<!--
-		Item 01: this page used to print every log's note. Nothing said the
-		confession box was public, so the honest move is to say the opposite out
-		loud: the feed is the activity, and the words stay with their author.
+		Item 01 used to say the opposite, and the reversal is the owner's call on
+		2026-10-29: "confessions/logs are public by default, user can choose to make
+		them private through a setting". So the page states the default out loud and
+		points at the switch — the one thing that would make this dishonest is
+		publishing without saying so.
 	-->
-	<p style="color:var(--text-dim);font-size:12px;margin:0 0 20px;">
-		Activity only — notes stay private to whoever wrote them.
+	<p style="color:var(--text-dim);font-size:12px;margin:0 0 20px;line-height:1.6;">
+		Confessions are public by default. <a href="/settings">Turn yours off</a> and your
+		logs stay out of this feed — the rows, the streak and the score are untouched.
 	</p>
 
 	<div class="card" style="padding:4px 18px;">
@@ -66,7 +69,14 @@
 						<span class="username" style="font-weight:600;">
 							<a href={`/profile/${item.username}`}>{item.username}</a>
 						</span>
-						<span style="color:var(--text-dim);font-size:12px;"> logged a completion</span>
+						<span style="color:{item.kind === 'denial' ? 'var(--gold)' : 'var(--text-dim)'};font-size:12px;">
+							{item.kind === 'denial' ? ' denied a load' : ' wasted a load'}
+						</span>
+						{#if item.note}
+							<div style="font-size:13px;color:var(--text);margin-top:4px;line-height:1.5;font-style:italic;">
+								“{item.note}”
+							</div>
+						{/if}
 					</div>
 					<span class="time">{timeAgo(item.logged_at)}</span>
 				</div>

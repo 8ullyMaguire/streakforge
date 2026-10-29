@@ -214,10 +214,12 @@ async fn every_leaderboard_period_decodes_and_answers(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn the_public_feed_has_no_note_field_while_the_note_survives_in_the_table(pool: PgPool) {
-    // Item 01, asserted at the layer the user actually receives. The asymmetry is
-    // the proof: the row still holds the note, and the endpoint cannot produce
-    // it. An empty table would prove nothing.
+async fn the_public_feed_carries_the_note_until_the_author_opts_out(pool: PgPool) {
+    // THIS TEST USED TO ASSERT THE FEED HAD NO NOTE FIELD. The owner reversed that
+    // policy on 2026-10-29 ("confessions/logs are public by default, user can
+    // choose to make them private through a setting"), so the assertion is now the
+    // switch, at the layer the user receives it: published by default, gone from
+    // the endpoint when `logs_public` is false — while the row itself survives.
     let uid = sqlx::query_scalar::<_, uuid::Uuid>(
         "insert into profiles (username, created_at) values ('feedprobe', now() - interval '2 days') returning id",
     )
@@ -225,28 +227,38 @@ async fn the_public_feed_has_no_note_field_while_the_note_survives_in_the_table(
     .await
     .unwrap();
     sqlx::query(
-        "insert into habit_logs (user_id, kind, note) values ($1, 'habit', 'a private confession')",
+        "insert into habit_logs (user_id, kind, note) values ($1, 'habit', 'a public confession')",
     )
     .bind(uid)
     .execute(&pool)
     .await
     .unwrap();
 
-    let res = get(&app(pool.clone()).await, "/api/feed?limit=10", None).await;
+    let app = app(pool.clone()).await;
+    let res = get(&app, "/api/feed?limit=10", None).await;
     assert_eq!(res.status(), StatusCode::OK);
     let body = json_of(res).await;
     let items = body["items"]
         .as_array()
         .expect("the feed returns an items array");
     assert_eq!(items.len(), 1, "the seeded log must appear");
-    assert!(
-        items[0].get("note").is_none(),
-        "the anonymous feed must not carry a note field at all: {items:?}"
+    assert_eq!(
+        items[0]["note"], "a public confession",
+        "a confession is public by default: {items:?}"
     );
+    assert_eq!(items[0]["kind"], "habit");
     assert_eq!(items[0]["username"], "feedprobe");
-    assert!(
-        items[0].get("logged_at").is_some(),
-        "the feed still says when"
+
+    sqlx::query("update profiles set logs_public = false where id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = json_of(get(&app, "/api/feed?limit=10", None).await).await;
+    assert_eq!(
+        body["items"].as_array().unwrap().len(),
+        0,
+        "the setting takes the row out of the public feed"
     );
 
     let notes: i64 = sqlx::query_scalar("select count(*) from habit_logs where note is not null")
@@ -255,7 +267,7 @@ async fn the_public_feed_has_no_note_field_while_the_note_survives_in_the_table(
         .unwrap();
     assert_eq!(
         notes, 1,
-        "the note is still in the table — privacy is about the endpoint"
+        "the note is still in the table — the setting governs publication, not storage"
     );
 }
 
@@ -528,4 +540,283 @@ async fn a_denial_blocks_the_next_denial_but_never_the_waste_button(pool: PgPool
         msg.contains("load wasted today"),
         "the refusal has to name the rule that fired: {msg}"
     );
+}
+
+/// POST a JSON body as `cookie`; returns the raw response so callers can assert
+/// status and body separately.
+async fn post_json(app: &Router, path: &str, cookie: &str, body: &str) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .header("cookie", cookie)
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn send(
+    app: &Router,
+    method: &str,
+    path: &str,
+    cookie: &str,
+    body: Option<&str>,
+) -> axum::response::Response {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("cookie", cookie);
+    if body.is_some() {
+        req = req.header("content-type", "application/json");
+    }
+    app.clone()
+        .oneshot(req.body(Body::from(body.unwrap_or("").to_string())).unwrap())
+        .await
+        .unwrap()
+}
+
+/// Give an account trust level 1 the honest way: backdate it a day and let it log
+/// three times. The level is computed from those rows, so nothing here grants it.
+async fn make_trust_1(pool: &PgPool, username: &str) {
+    sqlx::query("update profiles set created_at = now() - interval '2 days' where username = $1")
+        .bind(username)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "insert into habit_logs (user_id, kind)
+         select p.id, 'habit' from profiles p, generate_series(1, 3) where p.username = $1",
+    )
+    .bind(username)
+    .execute(pool)
+    .await
+    .expect("three logs for the trust floor");
+}
+
+/// The one-click landing flow: one POST writes the log, the SAME fifteen minutes
+/// then carry the time-to-cum number and the undo.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_log_can_be_given_a_duration_and_undone_inside_the_window(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let cookie = register(&app, "oneclick").await;
+
+    let res = post_json(&app, "/api/logs", &cookie, r#"{"kind":"habit"}"#).await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = json_of(res).await;
+    assert_eq!(body["stats"]["today_count"], 1);
+    assert_eq!(
+        body["stats"]["time_to_cum"]["samples"], 0,
+        "a one-click log carries no duration yet"
+    );
+
+    // The id the UI patches: it comes from the owner's own recent logs.
+    let res = get(&app, "/api/stats", Some(&cookie)).await;
+    let body = json_of(res).await;
+    let log_id = body["recent_logs"][0]["id"].as_i64().expect("the log id");
+
+    let res = send(
+        &app,
+        "PATCH",
+        &format!("/api/logs/{log_id}"),
+        &cookie,
+        Some(r#"{"time_to_cum_secs":900}"#),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK, "the duration is accepted in-window");
+    let body = json_of(res).await;
+    assert_eq!(body["stats"]["time_to_cum"]["samples"], 1);
+    assert_eq!(body["stats"]["time_to_cum"]["avg_secs"], 900.0);
+
+    let res = send(&app, "DELETE", &format!("/api/logs/{log_id}"), &cookie, None).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT, "undo inside the window");
+    let res = get(&app, "/api/stats", Some(&cookie)).await;
+    let body = json_of(res).await;
+    assert_eq!(body["today_count"], 0, "the row is gone, and so is its budget use");
+
+    // Past the window both writes are refused, and the message names the limit.
+    let res = post_json(&app, "/api/logs", &cookie, r#"{"kind":"habit"}"#).await;
+    let body = json_of(res).await;
+    let log_id = body["stats"]["recent_logs"][0]["id"].as_i64().unwrap();
+    sqlx::query("update habit_logs set logged_at = now() - interval '20 minutes' where id = $1")
+        .bind(log_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = send(
+        &app,
+        "PATCH",
+        &format!("/api/logs/{log_id}"),
+        &cookie,
+        Some(r#"{"time_to_cum_secs":900}"#),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let res = send(&app, "DELETE", &format!("/api/logs/{log_id}"), &cookie, None).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+}
+
+/// Cage checks end to end: locked → a check with a seal → two peers verify → the
+/// hours are verified hours. Also the three refusals that make it mean something.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_cage_check_needs_a_lock_and_two_peers_to_count(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let cookie = register(&app, "cageowner").await;
+
+    // No lock: nothing to check.
+    let res = post_json(&app, "/api/cage-check", &cookie, "{}").await;
+    assert_eq!(res.status(), StatusCode::CONFLICT, "no cage, no check");
+
+    let res = post_json(&app, "/api/lock", &cookie, "{}").await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let res = post_json(&app, "/api/cage-check", &cookie, r#"{"note":"still on"}"#).await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = json_of(res).await;
+    let check_id = body["id"].as_i64().expect("the check id");
+    let seal = body["seal_code"].as_str().expect("a seal");
+    assert_eq!(seal.len(), 8, "the seal is 8 characters: {seal}");
+    assert_eq!(body["status"], "pending");
+    assert!(
+        body["claimed_secs"].as_i64().unwrap() >= 0,
+        "claimed seconds are measured from the lock start"
+    );
+
+    // One a day.
+    let res = post_json(&app, "/api/cage-check", &cookie, "{}").await;
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // The owner cannot verify himself.
+    let res = post_json(
+        &app,
+        &format!("/api/cage-check/{check_id}/attest"),
+        &cookie,
+        r#"{"verdict":"confirm"}"#,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // Two peers at trust level 1.
+    let mut peers = Vec::new();
+    for name in ["cagepeer1", "cagepeer2"] {
+        let c = register(&app, name).await;
+        make_trust_1(&pool, name).await;
+        peers.push(c);
+    }
+
+    let res = post_json(
+        &app,
+        &format!("/api/cage-check/{check_id}/attest"),
+        &peers[0],
+        r#"{"verdict":"confirm"}"#,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert_eq!(body["status"], "pending", "one voice is not a quorum");
+    assert_eq!(body["confirms"], 1);
+
+    let res = post_json(
+        &app,
+        &format!("/api/cage-check/{check_id}/attest"),
+        &peers[1],
+        r#"{"verdict":"confirm"}"#,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert_eq!(body["status"], "verified", "two independent voices verify");
+
+    // And the metric the owner asked for now reflects it.
+    let res = get(&app, "/api/cage", Some(&cookie)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert!(
+        body["metrics"]["verified_secs"].as_i64().unwrap() >= 0,
+        "verified hours are reported"
+    );
+    assert_eq!(body["today"]["status"], "verified");
+    assert!(
+        body["total_verified_secs"].as_i64().is_some(),
+        "the site-wide verified total is published"
+    );
+}
+
+/// Confessions: public by default, and the setting is what takes them out.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_feed_publishes_the_confession_until_the_author_sets_it_private(pool: PgPool) {
+    let app = app(pool).await;
+    let cookie = register(&app, "confessor").await;
+
+    let res = post_json(
+        &app,
+        "/api/logs",
+        &cookie,
+        r#"{"kind":"habit","note":"I could not hold it"}"#,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let body = json_of(get(&app, "/api/feed", None).await).await;
+    assert!(
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["note"] == "I could not hold it"),
+        "the confession is in the public feed by default"
+    );
+
+    let res = send(
+        &app,
+        "PATCH",
+        "/api/profile",
+        &cookie,
+        Some(r#"{"logs_public":false}"#),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert_eq!(body["logs_public"], false);
+
+    let body = json_of(get(&app, "/api/feed", None).await).await;
+    assert!(
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["note"] != "I could not hold it"),
+        "the setting takes it out of the public feed"
+    );
+}
+
+/// Trust and the boards are readable, and the trust payload carries the progress
+/// the page needs rather than a bare number.
+#[sqlx::test(migrations = "./migrations")]
+async fn trust_and_the_new_boards_are_readable(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let cookie = register(&app, "trustprobe").await;
+
+    let res = get(&app, "/api/trust", Some(&cookie)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert_eq!(body["level"], 0);
+    assert_eq!(body["contributions"], 0);
+    assert_eq!(body["is_leader"], false);
+
+    let res = get(&app, "/api/metrics/boards", None).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert!(body["most_denied"].is_array());
+    assert!(body["consistency"].is_array());
+    assert!(body["locks"].is_array());
+
+    let res = get(&app, "/api/metrics/time-to-cum", None).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert_eq!(body["aggregate"]["samples"], 0);
+    assert!(body["mine"].is_null(), "an anonymous read has no personal block");
 }

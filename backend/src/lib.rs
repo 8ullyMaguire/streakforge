@@ -5,12 +5,15 @@ pub mod auth;
 #[cfg(test)]
 pub mod auth_tests;
 pub mod config;
+pub mod cage;
 pub mod consent;
 pub mod db;
 pub mod error;
 pub mod fold;
 pub mod guest;
 pub mod manifesto;
+pub mod metrics;
+pub mod moderation;
 pub mod router;
 
 use config::Config;

@@ -93,7 +93,7 @@
 	<div class="card" style="padding:18px;">
 		<h2 style="font-size:14px;letter-spacing:0.08em;margin:0 0 8px;">THE SHORT VERSION</h2>
 		<p style="font-size:14px;line-height:1.6;margin:0;">
-			Consenting adults, self-reported numbers, private words, public activity. No
+			Consenting adults, self-reported numbers, public activity, and confessions you can make private in settings. No
 			warranty, no promises about availability, and no interest in your data beyond
 			keeping the counters running.
 		</p>

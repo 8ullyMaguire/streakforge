@@ -52,11 +52,16 @@ describe('the glossary is complete', () => {
 		}
 	});
 
-	it('says that notes are private, because that is what changed', () => {
-		// The single most load-bearing definition on the page: users were
-		// publishing notes without being told (see docs/100_IDEAS.md #01).
+	it('states that a note is public by default, and where the switch is', () => {
+		// This test used to assert the opposite ("notes are private"), which was
+		// right while 0011 withheld the column. The owner reversed the policy on
+		// 2026-10-29 ("confessions/logs are public by default, user can choose to
+		// make them private through a setting"), and the glossary is where a user
+		// actually finds that out — so the assertion moves with the rule rather
+		// than being dropped.
 		const note = TERMS.find((t) => t.term === 'Note');
-		expect(note?.definition.toLowerCase()).toContain('private');
+		expect(note?.definition.toLowerCase()).toContain('public by default');
+		expect(note?.definition.toLowerCase()).toContain('settings');
 	});
 });
 

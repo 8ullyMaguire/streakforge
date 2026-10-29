@@ -1800,17 +1800,19 @@ async fn devotion(pool: &PgPool, uid: uuid::Uuid) -> IndexRow {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn feed_never_publishes_a_note(pool: PgPool) {
+async fn feed_publishes_a_note_only_for_a_public_author(pool: PgPool) {
+    // THIS TEST USED TO ASSERT THE OPPOSITE, and the change is the owner's call on
+    // 2026-10-29: "confessions/logs are public by default, user can choose to make
+    // them private through a setting". 0011 removed the column because the feed was
+    // publishing notes nobody had opted into; the column is back, and it is the
+    // author's `logs_public` switch — in SQL, not only in the handler — that decides.
     let uid = insert_aged_user(&pool, "notekeeper").await;
-    sqlx::query("insert into habit_logs (user_id, kind, note) values ($1, 'habit', 'private text')")
+    sqlx::query("insert into habit_logs (user_id, kind, note) values ($1, 'habit', 'public text')")
         .bind(uid)
         .execute(&pool)
         .await
         .unwrap();
 
-    // The note is gone from the function's RESULT TYPE, not merely unselected.
-    // A column the SQL cannot return is a column no handler can leak, and this
-    // is the assertion that survives a future `select *`.
     let cols: String = sqlx::query_scalar(
         "select pg_get_function_result(p.oid)
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -1819,20 +1821,34 @@ async fn feed_never_publishes_a_note(pool: PgPool) {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(!cols.contains("note"),
-        "activity_feed must not return a note column; a public feed of notes was the leak: {cols}");
+    assert!(
+        cols.contains("note"),
+        "activity_feed carries the confession again; the privacy switch is logs_public: {cols}"
+    );
 
-    // And a row really does decode as the six columns the handler expects.
-    // `logged_at::text` keeps this test free of a `time`/`chrono` type binding:
-    // the point here is the column COUNT and order, not the timestamp type.
-    let row = sqlx::query_as::<_, (i64, uuid::Uuid, String, Option<String>, Option<String>, String)>(
-        "select id, user_id, username, display_name, avatar_url, logged_at::text
+    // A row decodes as the eight columns the handler expects, note included.
+    let row = sqlx::query_as::<_, (i64, uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, String)>(
+        "select id, user_id, username, display_name, avatar_url, kind, note, logged_at::text
          from activity_feed(0, 50)",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(row.2, "notekeeper");
+    assert_eq!(row.5, "habit");
+    assert_eq!(row.6.as_deref(), Some("public text"));
+
+    // The switch is enforced by the function, so no future handler can leak past it.
+    sqlx::query("update profiles set logs_public = false where id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let count: i64 = sqlx::query_scalar("select count(*) from activity_feed(0, 50)")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "a private author is not in the public square");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1976,7 +1992,7 @@ async fn public_function_signatures_are_pinned(pool: PgPool) {
     let expected: [(&str, &str); 5] = [
         (
             "activity_feed",
-            "TABLE(id bigint, user_id uuid, username text, display_name text, avatar_url text, logged_at timestamp with time zone)",
+            "TABLE(id bigint, user_id uuid, username text, display_name text, avatar_url text, kind text, note text, logged_at timestamp with time zone)",
         ),
         (
             "devotion_index",
@@ -2007,4 +2023,378 @@ async fn public_function_signatures_are_pinned(pool: PgPool) {
         .unwrap();
         assert_eq!(got, want, "the column list of {name}() changed; the Rust tuple must change with it");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 2026-10-29 — cage checks, trust/quorum, time to cum, public confessions.
+// ---------------------------------------------------------------------------
+
+async fn profile(pool: &PgPool, name: &str) -> uuid::Uuid {
+    sqlx::query_scalar::<_, uuid::Uuid>(
+        "insert into profiles (username) values ($1) returning id",
+    )
+    .bind(name)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cage_hours_count_only_when_peers_verified_them(pool: PgPool) {
+    // The whole point of the metric: a claim is not an hour. Three checks, one
+    // verified, one pending, one disputed — only the verified one may count.
+    let uid = profile(&pool, "cage_hours").await;
+    sqlx::query("insert into lock_sessions (user_id, locked_at) values ($1, now() - interval '10 days')")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (days_ago, claimed, status) in [
+        (2, 7200, "verified"),
+        (1, 3600, "pending"),
+        (0, 1800, "disputed"),
+    ] {
+        sqlx::query(
+            "insert into cage_checks (user_id, checked_at, seal_code, claimed_secs, status)
+             values ($1, now() - ($2 || ' days')::interval, left(md5(random()::text), 8), $3, $4)",
+        )
+        .bind(uid)
+        .bind(days_ago)
+        .bind(claimed)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let (checks, claimed, verified, pending, disputed, rate): (i64, i64, i64, i64, i64, f64) =
+        sqlx::query_as(
+            "select checks::bigint, claimed_secs::bigint, verified_secs::bigint,
+                    pending_secs::bigint, disputed_secs::bigint, verification_rate::float8
+             from cage_check_hours($1)",
+        )
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(checks, 3);
+    assert_eq!(claimed, 12_600, "every claim is counted as claimed");
+    assert_eq!(verified, 7_200, "only the peer-verified check is verified hours");
+    assert_eq!(pending, 3_600);
+    assert_eq!(disputed, 1_800);
+    assert!((rate - 7_200.0 / 12_600.0).abs() < 1e-9, "rate is verified / claimed");
+
+    let global: i64 = sqlx::query_scalar("select total_verified_cage_hours()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(global, 7_200);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cage_check_is_one_per_utc_day(pool: PgPool) {
+    let uid = profile(&pool, "cage_daily").await;
+    let seal = "0123abcd";
+    sqlx::query("insert into cage_checks (user_id, seal_code, claimed_secs) values ($1, $2, 60)")
+        .bind(uid)
+        .bind(seal)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let second = sqlx::query("insert into cage_checks (user_id, seal_code, claimed_secs) values ($1, $2, 60)")
+        .bind(uid)
+        .bind("89abcdef")
+        .execute(&pool)
+        .await;
+    assert!(
+        second.is_err(),
+        "a second cage check on the same UTC day must violate the unique index"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn verified_cage_days_form_a_streak(pool: PgPool) {
+    let uid = profile(&pool, "cage_streak").await;
+    for days_ago in [2, 1, 0] {
+        sqlx::query(
+            "insert into cage_checks (user_id, checked_at, seal_code, claimed_secs, status)
+             values ($1, now() - ($2 || ' days')::interval, left(md5(random()::text), 8), 3600, 'verified')",
+        )
+        .bind(uid)
+        .bind(days_ago)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let (current, longest): (i32, i32) = sqlx::query_as(
+        "select current_verified_day_streak, longest_verified_day_streak from cage_check_hours($1)",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(current, 3);
+    assert_eq!(longest, 3);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn trust_level_1_is_earned_by_a_day_and_three_logs(pool: PgPool) {
+    let uid = profile(&pool, "trust_one").await;
+    // Fresh account, three logs today: not yet — the account has to be a day old.
+    for _ in 0..3 {
+        log_on_day(&pool, uid, "habit", 0).await;
+    }
+    let (level,): (i32,) = sqlx::query_as("select level from trust_level($1)")
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(level, 0, "a same-day account must not be able to attest");
+
+    sqlx::query("update profiles set created_at = now() - interval '2 days' where id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (level, contributions, next_at): (i32, i32, Option<i32>) =
+        sqlx::query_as("select level, contributions, next_level_at from trust_level($1)")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(level, 1);
+    assert_eq!(contributions, 3);
+    assert_eq!(next_at, Some(7), "7 contributions short of level 2");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_leader_is_level_4_and_everyone_else_earns_theirs(pool: PgPool) {
+    let uid = profile(&pool, "trust_leader").await;
+    sqlx::query("update profiles set is_leader = true where id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (level, next_at): (i32, Option<i32>) =
+        sqlx::query_as("select level, next_level_at from trust_level($1)")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(level, 4);
+    assert_eq!(next_at, None, "level 4 is granted, so there is no auto-progress");
+
+    // A regular account with 7 active days and 10 contributions reaches level 2.
+    let r = profile(&pool, "trust_two").await;
+    for d in 0..7 {
+        log_on_day(&pool, r, "habit", d).await;
+    }
+    for d in 0..3 {
+        log_on_day(&pool, r, "affirmation", d).await;
+    }
+    sqlx::query("update profiles set created_at = now() - interval '20 days' where id = $1")
+        .bind(r)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (level, active_days): (i32, i32) = sqlx::query_as("select level, active_days from trust_level($1)")
+        .bind(r)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(active_days, 7);
+    assert_eq!(level, 2, "7 active days + 10 contributions is level 2");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn three_flags_with_one_trusted_voice_hide_a_log(pool: PgPool) {
+    let author = profile(&pool, "flag_author").await;
+    let id: i64 = sqlx::query_scalar(
+        "insert into habit_logs (user_id, kind, note) values ($1, 'habit', 'a confession') returning id",
+    )
+    .bind(author)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let a = profile(&pool, "flag_a").await;
+    let b = profile(&pool, "flag_b").await;
+    let leader = profile(&pool, "flag_leader").await;
+    sqlx::query("update profiles set is_leader = true where id = $1")
+        .bind(leader)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for reporter in [a, b] {
+        sqlx::query("insert into flags (target_kind, target_id, reporter_id, reason) values ('log', $1, $2, 'spam')")
+            .bind(id)
+            .bind(reporter)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let (flags, from_tl2): (i32, i32) =
+        sqlx::query_as("select flags, from_tl2 from flag_quorum('log', $1)")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(flags, 2);
+    assert_eq!(from_tl2, 0, "two untrusted flags are not a verdict");
+
+    sqlx::query("insert into flags (target_kind, target_id, reporter_id, reason) values ('log', $1, $2, 'spam')")
+        .bind(id)
+        .bind(leader)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (flags, from_tl2): (i32, i32) =
+        sqlx::query_as("select flags, from_tl2 from flag_quorum('log', $1)")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(flags, 3);
+    assert_eq!(from_tl2, 1);
+
+    sqlx::query("select hide_target('log', $1)")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let hidden: bool = sqlx::query_scalar("select hidden_at is not null from habit_logs where id = $1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(hidden);
+    sqlx::query("select restore_target('log', $1)")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let hidden: bool = sqlx::query_scalar("select hidden_at is not null from habit_logs where id = $1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!hidden, "a restore puts the content back");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn time_to_cum_publishes_both_averages(pool: PgPool) {
+    // One member logs three times, another once. The pooled average follows the
+    // logs; the average of per-person averages gives each person one vote. The two
+    // numbers differ by design and both are published.
+    let a = profile(&pool, "ttc_a").await;
+    let b = profile(&pool, "ttc_b").await;
+    for secs in [600, 900, 1200] {
+        sqlx::query("insert into habit_logs (user_id, kind, time_to_cum_secs) values ($1, 'habit', $2)")
+            .bind(a)
+            .bind(secs)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("insert into habit_logs (user_id, kind, time_to_cum_secs) values ($1, 'habit', 300)")
+        .bind(b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (samples, avg, median, last): (i64, f64, f64, Option<i32>) = sqlx::query_as(
+        "select samples::bigint, avg_secs::float8, median_secs::float8, last_secs from time_to_cum_stats($1)",
+    )
+    .bind(a)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(samples, 3);
+    assert!((avg - 900.0).abs() < 1e-9);
+    assert!((median - 900.0).abs() < 1e-9);
+    assert_eq!(last, Some(1200));
+
+    let (samples, pooled, median, per_user, reporters): (i64, f64, f64, f64, i64) = sqlx::query_as(
+        "select samples::bigint, avg_secs::float8, median_secs::float8,
+                avg_of_user_avgs_secs::float8, reporters::bigint from time_to_cum_aggregate()",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(samples, 4);
+    assert!((pooled - 750.0).abs() < 1e-9, "pooled over logs: (600+900+1200+300)/4");
+    assert!((median - 750.0).abs() < 1e-9);
+    assert!((per_user - 600.0).abs() < 1e-9, "per-person: (900 + 300)/2");
+    assert_eq!(reporters, 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_feed_publishes_confessions_until_the_author_opts_out(pool: PgPool) {
+    let uid = profile(&pool, "feed_public").await;
+    sqlx::query("insert into habit_logs (user_id, kind, note) values ($1, 'habit', 'my confession')")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("insert into habit_logs (user_id, kind, note) values ($1, 'denial', 'held it')")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("insert into habit_logs (user_id, kind, note) values ($1, 'affirmation', 'drill')")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("select kind, note from activity_feed(0, 50)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 2, "waste and denial, never a drill rep");
+    assert!(
+        rows.iter().any(|(k, n)| k == "habit" && n.as_deref() == Some("my confession")),
+        "a confession is public by default"
+    );
+    assert!(rows.iter().any(|(k, _)| k == "denial"));
+
+    // The switch: private means gone from the public square, own history intact.
+    sqlx::query("update profiles set logs_public = false where id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("select kind, note from activity_feed(0, 50)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(rows.is_empty(), "logs_public = false removes the rows from the feed");
+    let own: i64 = sqlx::query_scalar("select count(*) from habit_logs where user_id = $1")
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(own, 3, "the rows themselves are untouched");
+
+    // Hidden content is out of the feed too, even for a public author.
+    sqlx::query("update profiles set logs_public = true where id = $1")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("update habit_logs set hidden_at = now() where user_id = $1 and kind = 'denial'")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let rows: Vec<(String,)> = sqlx::query_as("select kind from activity_feed(0, 50)")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, "habit");
 }
