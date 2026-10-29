@@ -761,3 +761,114 @@ og.png is static. Rendering the score, streak and verified hours into a per-prof
 *Score 0.33 — impact 2 ÷ effort 6 (L) — Ops*
 
 There is one session cookie and no list. 'Signed in on these devices, end this one' is standard hygiene for a site holding this kind of history, and it is a table plus two endpoints.
+
+
+---
+
+## 2026-10-29 (third pass) — what the shipped features still owe
+
+Same scoring as everything else: **impact ÷ effort**. This batch is the debt the first two passes
+created and the things a stranger would notice before the owner does: a metric published without
+consent, a safety gap where the content is edge practice, and four numbers about the product that
+nobody can currently report.
+
+### 121. A safety and aftercare page, before any more features
+*Score 1.0 — impact 5 ÷ effort 3 (S) — Safety*
+
+The site tracks locking, denial and edges with no page about what to do when a lock hurts, when to stop, or how to come off a long denial. It is content, not code — and it is the one omission that turns a kink tracker into a liability. Doctrine is the right home: a safety section, an emergency-release protocol, and links that are honest about being external.
+
+### 122. Time to cum is opt-in on the board, not published by default
+*Score 1.0 — impact 4 ÷ effort 3 (S) — Privacy*
+
+Right now one PATCH publishes a member's average to the world after five samples; nothing asked. The duration is the most personal number on the site. `profiles.ttc_public` defaulting to false, with the board built only from opted-in members and the aggregate still counting everyone anonymously, keeps the metric and returns the consent.
+
+### 123. Numbers about the product, from the database
+*Score 1.0 — impact 4 ÷ effort 3 (S) — Product*
+
+Nobody can answer 'is this growing' without counting rows by hand. A `/admin` page (TL4) with weekly active humans, new accounts, guest→account conversion, median logs per active member per week, and a 12-week retention curve — all computed from tables that already exist — is what makes the next prioritisation decision evidence instead of taste.
+
+### 124. Keep the retention promise: purge tombstones, audit rows and dead sessions
+*Score 1.0 — impact 3 ÷ effort 3 (S) — Privacy*
+
+The terms describe a bounded history and nothing implements the bound. Folded guest tombstones, audit rows past their window and sessions older than their TTL accumulate forever. One nightly job, one documented window per table, and a count published on the status page.
+
+### 125. Publish the restore rehearsal, not just the backup
+*Score 1.0 — impact 3 ÷ effort 3 (S) — Ops*
+
+`restore-db.sh` already runs monthly on thinkcentre; its output goes to a log nobody reads. Surfacing last run's timestamp, restored row counts and the delta against production on a public status page converts an unverified backup into a tested one.
+
+### 126. A pageview number that exists before anyone talks about RPM
+*Score 1.0 — impact 3 ÷ effort 3 (S) — Growth*
+
+nginx's stock format has no `$host`, so this estate cannot say how many pages any site serves. A second JSON `log_format` with `$host`, a written pageview definition (GET, 200, not `/api`, not an asset, not a bot) and a daily snapshot is the denominator every later monetisation or growth claim needs.
+
+### 127. Measure which routes are actually used, then delete the rest
+*Score 1.0 — impact 3 ÷ effort 3 (S) — Craft*
+
+The site has ~20 routes and three active members; several are almost certainly dead weight kept alive by nothing but the cost of writing them. A pageview-per-route table for a month, then the honest deletion of what nobody opens — with the doctrine, glossary and terms kept regardless of traffic.
+
+### 128. Pin the decode contract of every SQL function, types included
+*Score 1.0 — impact 3 ÷ effort 2 (S) — Testing*
+
+A `bigint` in Rust against an `int4` column is a runtime 500 that no compiler and no unit test sees — it happened today, in `cage.rs`, and only the route test caught it. Every function the API decodes positionally (`activity_feed`, `cage_check_hours`, `time_to_cum_stats`, `trust_level`, `flag_quorum`) needs its result types asserted, not just its existence.
+
+### 129. Cage hours can never exceed the lock they came from
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Data*
+
+A verified check claims elapsed time, and nothing compares the sum against the lock that started it. A nightly contradiction report (claimed > lock duration, two checks in one day, a verified check with no lock, a seal repeated) catches both bugs and liars, and turns the verified total into a number worth trusting.
+
+### 130. A 'since your last visit' strip on the dashboard
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Retention*
+
+A member returning after four days sees the same page as one who logged ten minutes ago. Three computed diffs — your rank moved, a record you held was beaten, what the feed did in your absence — cost one query and give the visit a reason to continue.
+
+### 131. Optimistic logging: the row appears instantly, and stays only if the server agrees
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Craft*
+
+The counter only moves after the round trip, so the click feels slower than the page looks. Render the row and the counter immediately, reconcile on the response, roll back with an explanation on failure — the same rule the undo card already follows, applied to the click itself.
+
+### 132. A records page: the extremes nobody can beat by trying
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Boards*
+
+Boards rank the last 30 days. A records page holds the all-time extremes — longest lock, longest denial run, longest verified cage streak, fastest and slowest reported edge, best week — which are cheap to compute, stable enough to be worth citing, and the only part of the site with a real chance of being screenshotted.
+
+### 133. Quiet mode: track without being ranked
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Identity*
+
+Every member is on the board whether they want to be or not, and some of them are here for the diary rather than the contest. One flag that removes a member from every ranking while leaving their own numbers intact is smaller than the consent argument it settles.
+
+### 134. Decide the payment rail before designing anything paid
+*Score 0.75 — impact 3 ÷ effort 4 (M) — Money*
+
+This content is prohibited by Stripe, PayPal, Ko-fi and every mainstream ad network, so a supporters tier designed before the rail exists is a design that cannot ship. Write the decision: what is permitted (an adult-friendly processor, crypto, or nothing), what it constrains, and only then what the tier is.
+
+### 135. Retract a log with a reason, beyond the 15-minute undo
+*Score 0.6 — impact 3 ÷ effort 5 (M) — Data*
+
+The undo window is fifteen minutes and the confessions are meant to be honest; a week-old row that was wrong has no path except deletion. A retraction that flags the row (excluded from boards and the feed, visible in history as retracted with a reason) keeps the record honest without pretending it never happened.
+
+### 136. A supporters tier that buys cosmetics and nothing else
+*Score 0.6 — impact 3 ÷ effort 5 (M) — Money*
+
+The credible version of monetisation here never gates a feature that already exists: a badge, a colour on the board, early access to a doctrine section. It is also the version a community of three will tolerate — and it prices the thing actually on offer, which is upkeep, not access.
+
+### 137. An ops page: database size, disk, backup freshness, log volume
+*Score 0.6 — impact 3 ÷ effort 5 (M) — Ops*
+
+The site runs on one host with no monitoring beyond a health check and a self-heal timer. Four numbers rendered once an hour — DB size and growth rate, disk free, hours since the last dump, log lines per day — catch the failures that a 200 does not: a table growing without bound, a backup that stopped.
+
+### 138. Chained seals: tomorrow's code depends on today's
+*Score 0.6 — impact 3 ÷ effort 5 (M) — Cage*
+
+A seal is random per check, so a check can be fabricated by anyone who can read what the site issues. Deriving each day's code from the previous code plus a server secret makes a chain: a member who skipped a day cannot produce a consistent sequence, and a verifier comparing two consecutive codes can tell.
+
+### 139. Streak repair, paid for in verified cage hours
+*Score 0.5 — impact 3 ÷ effort 6 (L) — Game*
+
+A broken streak is where members leave. Letting one be repaired by spending earned verified hours makes the newest metric the currency of the oldest one, and prices the repair in the only thing the site cannot fake: time actually attested by peers.
+
+### 140. A per-member feed for the people who watch one person
+*Score 0.5 — impact 2 ÷ effort 4 (M) — Growth*
+
+The site feed is global, and members follow individuals rather than the site. `/u/<name>.json` plus an RSS view of one member's public events is the smallest social surface there is, needs no following table, and gives the keyholder shape a machine-readable half.
+
