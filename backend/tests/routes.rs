@@ -1522,3 +1522,72 @@ async fn time_to_cum_is_opt_in_and_the_switch_is_a_setting(pool: PgPool) {
     assert_eq!(profile["time_to_cum_avg_secs"], serde_json::Value::Null);
     assert_eq!(profile["time_to_cum_samples"], 1);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_numbers_page_is_for_the_leader_only(pool: PgPool) {
+    // 0022. Two gates matter and both are asserted: a signed-out caller and an ordinary member
+    // get the same refusal shape they get everywhere else (401, then 403), and the leader gets a
+    // body whose every field decodes — a bigint read as i64 is this codebase's most repeated
+    // runtime 500, and this endpoint is all numbers.
+    let app = app(pool.clone()).await;
+
+    let anon = get(&app, "/api/admin/numbers", None).await;
+    assert_eq!(anon.status(), StatusCode::UNAUTHORIZED, "sign in first");
+
+    let alice = register(&app, "numbersmember").await;
+    let denied = get(&app, "/api/admin/numbers", Some(&alice)).await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    assert!(json_of(denied).await["error"]
+        .as_str()
+        .unwrap()
+        .contains("leader"));
+
+    sqlx::query("update profiles set is_leader = true where username = 'numbersmember'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = get(&app, "/api/admin/numbers", Some(&alice)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+
+    // Overview: every column present, as a number or an honest null.
+    for key in [
+        "members",
+        "active_1d",
+        "active_7d",
+        "new_7d",
+        "guests_created",
+        "guests_converted",
+        "logs_1d",
+        "logs_7d",
+        "verified_cage_secs",
+        "affirmations_live",
+    ] {
+        assert!(body["overview"][key].is_i64(), "overview.{key} must be a number");
+    }
+    assert_eq!(body["overview"]["members"], 1, "one member, the leader herself");
+    assert!(
+        body["overview"]["median_logs_per_active_7d"].is_f64()
+            || body["overview"]["median_logs_per_active_7d"].is_i64(),
+        "the median decodes as a number, not as a string"
+    );
+    assert_eq!(body["overview"]["conversion_rate"], serde_json::Value::Null, "no guests, no rate");
+
+    // Weekly: twelve rows, oldest first, the current week last.
+    let weeks = body["weekly"].as_array().unwrap();
+    assert_eq!(weeks.len(), 12);
+    assert!(weeks[0]["week_start"].is_string());
+    assert!(weeks[11]["active_members"].is_i64());
+    assert_eq!(weeks[11]["active_members"], 0, "nobody logged this week in this fixture");
+
+    // Retention: eight cohorts, newest first, future windows null.
+    let cohorts = body["retention"].as_array().unwrap();
+    assert_eq!(cohorts.len(), 8);
+    assert_eq!(cohorts[0]["cohort_size"], 1, "the leader joined this week");
+    assert_eq!(cohorts[0]["w1"], serde_json::Value::Null);
+
+    // The definitions ship with the numbers.
+    assert!(body["notes"].as_array().unwrap().len() >= 5);
+    assert!(body["generated_at"].is_string());
+}

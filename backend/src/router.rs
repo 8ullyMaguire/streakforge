@@ -108,6 +108,8 @@ pub async fn build_router(cfg: &Config, pool: PgPool) -> Result<Router, sqlx::Er
         .route("/metrics/time-to-cum", get(crate::metrics::time_to_cum))
         .route("/metrics/boards", get(crate::metrics::boards))
         .route("/trust", get(crate::moderation::get_trust))
+        // The product numbers (0022). Trust level 4 only; the handler enforces it.
+        .route("/admin/numbers", get(crate::admin::numbers))
         .route("/flags", post(crate::moderation::flag))
         .route("/moderation/queue", get(crate::moderation::queue))
         .route("/moderation/action", post(crate::moderation::action))

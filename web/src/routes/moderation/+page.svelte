@@ -145,6 +145,16 @@
 			</div>
 		</div>
 
+		{#if trust.is_leader}
+			<a
+				href="/admin"
+				class="btn"
+				style="display:inline-block;margin:4px 0 18px;text-decoration:none;"
+			>
+				PRODUCT NUMBERS →
+			</a>
+		{/if}
+
 		{#if trust.level >= 2}
 			<h2 style="font-size:16px;letter-spacing:0.08em;margin:24px 0 12px;">
 				THE QUEUE ({queue.length})

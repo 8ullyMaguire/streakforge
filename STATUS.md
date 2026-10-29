@@ -1,5 +1,39 @@
 # StreakForge — Development Status
 
+## 2026-10-29 (sixth pass) — the product numbers, and the roadmap closed
+
+Owner: *"#123 a TL4 /admin page with product numbers … implement these and dismiss everything else in
+the roadmap."* Plan: `docs/plans/2026-10-29-admin-numbers.md`.
+
+- **`/admin` (0022, `backend/src/admin.rs`).** Trust level 4 only. Three figures the rest of the site
+  cannot answer: weekly active members, guest→account conversion, and W1..W4 retention by signup week.
+  All of it from `admin_overview()`, `admin_weekly()` and `admin_retention()` so psql, the tests and the
+  page read the same arithmetic; the handler only gates and serialises, casting every numeric column to
+  `bigint`/`float8` because an INT4 into an `i64` is this codebase's most repeated runtime 500.
+- **Definitions shipped with the numbers.** `notes[]` travels in the payload and the page prints it
+  under "HOW THESE ARE COUNTED", because "retention" and "active" are the two words most likely to be
+  read as something kinder than they are. A converted guest is counted in the week the *guest appeared*,
+  not the week it registered; a future retention window is `null` (printed "—"), never a 0% that would
+  claim everyone left; the median is over members, not over logs.
+- **Counts, never people, and reads are not audited.** No username appears in the payload; `audit_log`
+  records actions, and a row per page view would turn it into a log of the leader's browsing. The
+  protection is the shape of the data, not a log entry.
+- **The roadmap is closed.** `docs/100_IDEAS.md` and `docs/FEATURE_IDEAS.md` now carry a closure banner
+  and `docs/ROADMAP-guest-trust-governance.md` records GS-5 as dismissed: everything not already built
+  is dismissed rather than deferred. Those files are records of what was considered, not backlogs.
+
+Verified: 148 backend tests (22 unit · 11 consent · 14 guest · 67 integration · 27 routes · 7
+edge-case), 145 vitest, svelte-check 0/0, vite build clean. Integration test builds a cohort by hand —
+three members in the week of 2026-09-28 with logs in W1 (two), W2 (one), W3 (none), W4 (one) — and
+asserts `size 3, w1 2, w2 1, w3 0, w4 1`, a conversion rate of `0.5`, `null` for future windows, and
+that a guest's log never counts as a member's activity. Live: anonymous 401, a fresh member 403 ("The
+numbers page belongs to the site's leader…"), a temporary leader 200 with `members 74, active_7d 3,
+guests 0, conversion_rate null`, cross-checked against SQL (`74 / 3 / 0`). In a browser `/admin` drew
+the cards, the funnel, the weekly bars and the retention grid with real percentages (`3 38%`,
+`1 13%`, `0 0%` for the 2026-10-05 cohort) and "—" where a week has not happened; with the leader bit
+removed the same URL showed the refusal card. Probe account deleted — 73 members, 0 leaders, 18 deck
+lines.
+
 ## 2026-10-29 (fifth pass) — the consent the brainstorm asked for, and a profile that can be read
 
 Standing instruction: finish what is left without asking. Plan:

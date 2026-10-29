@@ -1,5 +1,9 @@
 # StreakForge — Feature Ideas
 
+> **CLOSED 2026-10-29** — like `100_IDEAS.md`, this is a record rather than a backlog: the owner
+> dismissed the remaining roadmap when #123 (the leader's product numbers) shipped. Kept for the
+> reasoning.
+
 Written 2026-09-28, against the tree as it actually stands today (migrations
 0001–0009, 9 routes, `docs/` plan already executed). This is a *second* pass:
 `BRAINSTORM_POPULARITY.md` proposed the growth strategy and a lot of it shipped.

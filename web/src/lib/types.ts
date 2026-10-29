@@ -432,3 +432,49 @@ export interface ApiError {
 export function isApiError(x: unknown): x is ApiError {
 	return typeof x === 'object' && x !== null && 'error' in x;
 }
+
+
+// ---- the leader's product numbers (0022) ----
+
+export interface AdminOverview {
+	members: number;
+	active_1d: number;
+	active_7d: number;
+	new_7d: number;
+	guests_created: number;
+	guests_converted: number;
+	/** null when no guest has ever been created — an undefined rate, not 0%. */
+	conversion_rate: number | null;
+	logs_1d: number;
+	logs_7d: number;
+	median_logs_per_active_7d: number;
+	verified_cage_secs: number;
+	affirmations_live: number;
+}
+
+export interface AdminWeek {
+	week_start: string;
+	active_members: number;
+	new_members: number;
+	logs: number;
+	guests: number;
+	guests_converted: number;
+}
+
+export interface AdminCohort {
+	cohort_start: string;
+	cohort_size: number;
+	/** null while that week has not happened yet. */
+	w1: number | null;
+	w2: number | null;
+	w3: number | null;
+	w4: number | null;
+}
+
+export interface AdminNumbers {
+	overview: AdminOverview;
+	weekly: AdminWeek[];
+	retention: AdminCohort[];
+	generated_at: string;
+	notes: string[];
+}

@@ -752,7 +752,28 @@ below that it is `pending` and appears in the `review` list of every level-2 mem
 public — the drill reads these lines to anyone who opens it — while `mine` and `review` require a
 session, and `review` requires level 2.
 
-### 8.7 Manifesto
+### 8.7 The leader's numbers
+
+| Method | Path | Auth | Response |
+|--------|------|------|----------|
+| GET | `/admin/numbers` | ✓ trust level 4 | `{overview, weekly[12], retention[8], generated_at, notes[]}` |
+
+`overview` — members, active_1d, active_7d, new_7d, guests_created, guests_converted,
+conversion_rate (null when no guest ever existed), logs_1d, logs_7d, median_logs_per_active_7d,
+verified_cage_secs, affirmations_live.
+
+`weekly` — one row per ISO week (Monday 00:00 UTC) for the last 12, including the incomplete current
+one: week_start, active_members, new_members, logs, guests, guests_converted.
+
+`retention` — the last 8 signup cohorts, newest first: cohort_start, cohort_size, w1..w4, where a null
+means that week has not happened yet.
+
+Every figure comes from `admin_overview()`, `admin_weekly()` and `admin_retention()` (0022), so psql,
+the tests and the page read the same arithmetic. Reads are not written to `audit_log`: that table
+records actions, and a row per page view would turn it into a log of the leader's browsing. What
+protects members is that the payload is counts — there is no per-member row and no username.
+
+### 8.8 Manifesto
 
 | Method | Path | Auth | Response |
 |--------|------|------|----------|
@@ -1162,6 +1183,24 @@ to hardcode "7 active days" for a level the database granted at 3.
 
 The week, not the month: measured over 30 days the count on production was 18 while three members had
 logged that day, and a band that never falls below ten never bends.
+
+---
+
+### 14.9 The product numbers, and what each word means (0022)
+
+| term | definition |
+|---|---|
+| member | a non-guest profile with `merged_into is null`. Guests and tombstones are counted separately, never mixed in |
+| active | at least one log of **any** kind in the window — the question is whether someone used the site |
+| week | ISO week, Monday 00:00 UTC |
+| converted guest | a guest row carrying `merged_into`, counted in the week the **guest appeared**, not the week it registered |
+| retention W*n* | share of a signup week still logging in the *n*-th week after it; **null** while that week is in the future |
+| median logs per active member | `percentile_cont(0.5)` over per-member counts, not an average over logs |
+
+Two of those are choices worth defending. Counting the conversion in the guest's own week makes the
+denominator the people who tried anonymously; counting it at registration would flatter the funnel by
+moving successes into the current week. And a future retention window is null rather than 0, because a
+zero there reads as "everyone who joined on Monday left", which is a claim the data has not made.
 
 ---
 

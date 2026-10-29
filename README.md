@@ -75,6 +75,10 @@ Plus `STATUS.md` for the living dev-status checklist.
   computed from activity (never stored, except the leader flag); three flags with at
   least one trusted voice hide content, two restore votes bring it back, leaders can
   act alone, and every action is written to `moderation_actions`.
+- **Product numbers, for the leader only** — `/admin` answers the three questions a
+  dashboard exists for: weekly active members, guest→account conversion, and week-1..4 retention
+  by signup cohort. Trust level 4 only, aggregates only — no member is named, and the definitions
+  travel with the numbers so "retention" cannot be read as something kinder than it is.
 - **Time to cum is opt-in** — the duration a member reports is the most personal number the
   site keeps, so `share_time_to_cum` defaults **off** (the only switch here that starts off) and
   the public averages count only members who turned it on. Your own figures are always yours to
@@ -271,6 +275,7 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | GET    | `/api/moderation/queue`   | ✓    | Flagged targets (TL ≥ 2) |
 | POST   | `/api/moderation/action`  | ✓    | Hide (TL 4) / restore (2 votes or TL 4) |
 | PATCH  | `/api/profile`            | ✓    | Edits, plus the two publication switches (`logs_public`, `share_time_to_cum`) |
+| GET    | `/api/admin/numbers`      | ✓ TL4 | Growth, conversion and retention aggregates; 403 for anyone else |
 | GET    | `/api/affirmations`       | —    | The deck, plus your own lines and (level 2+) the review queue |
 | POST   | `/api/affirmations`       | ✓    | Submit a line: live at level 2, else pending |
 | POST   | `/api/affirmations/{id}/approve` \| `.../hide` | ✓ | Admit (level 2+), hide (author or level 2+) |

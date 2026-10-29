@@ -2788,3 +2788,107 @@ async fn active_means_this_week_not_this_month(pool: PgPool) {
         .unwrap();
     assert_eq!(n, 1, "only the one who is here this week");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_admin_numbers_count_cohorts_and_conversions_correctly(pool: PgPool) {
+    // 0022. Hand-checked arithmetic, because these three functions are the only place the site
+    // states whether it is growing: a wrong join here is a wrong decision later, and the page
+    // has no way to look doubtful.
+    //
+    // Cohort = the ISO week of 2026-09-28 (a Monday). Three members joined, two logged in W1,
+    // one in W2, none in W3, one again in W4. Two guests appeared in the week of 2026-10-19 and
+    // one of them registered.
+    for (id, name, at) in [
+        ("aaaaaaaa-0000-0000-0000-000000000001", "c_a", "2026-09-29 10:00Z"),
+        ("aaaaaaaa-0000-0000-0000-000000000002", "c_b", "2026-09-30 10:00Z"),
+        ("aaaaaaaa-0000-0000-0000-000000000003", "c_c", "2026-10-01 10:00Z"),
+    ] {
+        sqlx::query("insert into profiles (id, username, created_at) values ($1, $2, $3::timestamptz)")
+            .bind(uuid::Uuid::parse_str(id).unwrap())
+            .bind(name)
+            .bind(at)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let a = uuid::Uuid::parse_str("aaaaaaaa-0000-0000-0000-000000000001").unwrap();
+    let b = uuid::Uuid::parse_str("aaaaaaaa-0000-0000-0000-000000000002").unwrap();
+    let c = uuid::Uuid::parse_str("aaaaaaaa-0000-0000-0000-000000000003").unwrap();
+    for (who, at) in [
+        (a, "2026-10-06 12:00Z"),
+        (b, "2026-10-07 12:00Z"),
+        (a, "2026-10-08 12:00Z"),
+        (c, "2026-10-13 12:00Z"),
+        (b, "2026-10-27 12:00Z"),
+    ] {
+        sqlx::query("insert into habit_logs (user_id, kind, logged_at) values ($1, 'habit', $2::timestamptz)")
+            .bind(who)
+            .bind(at)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("insert into profiles (username, is_guest, created_at) values ('g1', true, '2026-10-20 10:00Z'), ('g2', true, '2026-10-21 10:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("update profiles set merged_into = $1 where username = 'g1'")
+        .bind(c)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (size, w1, w2, w3, w4): (i64, Option<i64>, Option<i64>, Option<i64>, Option<i64>) =
+        sqlx::query_as(
+            "select cohort_size::bigint, w1::bigint, w2::bigint, w3::bigint, w4::bigint
+               from admin_retention(8) where cohort_start = '2026-09-28'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(size, 3);
+    assert_eq!((w1, w2, w3, w4), (Some(2), Some(1), Some(0), Some(1)), "a,b | c | nobody | b");
+
+    // A cohort whose W4 has not happened yet reports NULL, not a 0% verdict on everyone.
+    let (size, w1, w4): (i64, Option<i64>, Option<i64>) = sqlx::query_as(
+        "select cohort_size::bigint, w1::bigint, w4::bigint
+           from admin_retention(8) where cohort_start = date_trunc('week', (now() at time zone 'utc'))::date",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(size, 0);
+    assert_eq!((w1, w4), (None, None), "the current week has no future behind it yet");
+
+    let (guests, converted, rate): (i64, i64, Option<f64>) = sqlx::query_as(
+        "select guests_created::bigint, guests_converted::bigint, conversion_rate::float8 from admin_overview()",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((guests, converted), (2, 1));
+    assert!((rate.unwrap() - 0.5).abs() < 1e-9);
+
+    // Weekly: the guests belong to the week they appeared in, and only the converted one counts.
+    let (g, gc): (i64, i64) = sqlx::query_as(
+        "select guests::bigint, guests_converted::bigint from admin_weekly(12) where week_start = '2026-10-19'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((g, gc), (2, 1));
+
+    // The weekly series never mixes guests into the active count, even when a guest logs.
+    sqlx::query("insert into habit_logs (user_id, kind, logged_at) select id, 'habit', now() - interval '2 days' from profiles where username = 'g2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (active, median): (i64, f64) = sqlx::query_as(
+        "select active_7d::bigint, median_logs_per_active_7d::float8 from admin_overview()",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(active, 1, "the guest's log is not a member's activity");
+    assert!((median - 1.0).abs() < 1e-9);
+}

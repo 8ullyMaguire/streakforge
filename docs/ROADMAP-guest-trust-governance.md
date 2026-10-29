@@ -1,7 +1,8 @@
 # Guest access, trust levels and self-governance — streakforge
 
-Status: **GS-1 … GS-4 shipped (2026-10-27/28/29)**; GS-5 stays deferred (nothing to govern until the deck
-and the feed need it — and the deck now has an admission rule of its own, below).
+Status: **GS-1 … GS-4 shipped; GS-5 dismissed 2026-10-29** with the rest of the roadmap (owner:
+"implement #123 and dismiss everything else in the roadmap"). This file is now a record of how the
+guest/trust/consent work was decided and built — not a plan. Nothing in it is scheduled.
 The estate-wide standard (items GS-1…GS-5, every setting configurable, defaults and firewalls) is:
 
     secondbrain/10-Projects/2026-10-16-guest-access-trust-and-self-governance.md

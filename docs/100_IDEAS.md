@@ -1,5 +1,17 @@
 # StreakForge — 100 Ideas, ranked by impact ÷ effort
 
+> **CLOSED 2026-10-29.** After #123 shipped, the owner's instruction was: "implement these and dismiss
+> everything else in the roadmap." Every idea below that is not already built is **dismissed** — not
+> deferred, not "next quarter". This file is kept as the record of what was considered and why, because
+> that reasoning is still the best answer to "why doesn't the site do X" months from now. It is not a
+> backlog: an item is reopened by asking the owner, never by picking it up.
+>
+> Shipped from this list: the privacy fix and ranks 01–16 (2026-10-14), one-way exclusivity, cage
+> checks and peer attestation, trust levels with quorum moderation, the metrics and boards pass, the
+> yesterday catch-up window (#110), export and erasure (#111 and #124), the member-written deck, the
+> two-band trust ladder (#122's consent, taken stricter than written), the profile numbers block (#5),
+> and #123 — the leader's product numbers, the last item to land.
+
 Written 2026-10-14, against the tree at `1fd713d` (migrations 0001–0010, 20 routes, 12 frontend routes). Companion file to `docs/FEATURE_IDEAS.md`, which is a shorter essay-shaped list; this one is 100 discrete, scored items.
 
 **How to read the score.** Every idea carries an `impact` (1–10) and an `effort` (1–10), and the score is `impact ÷ effort` — value for the work, not importance. That is the same encoding Concord's `features` table uses (`impact`, `effort_score`, and a generated `impact_ratio`), so the same 100 items filed there sort identically; this is deliberate, not a coincidence. The top of the list is therefore dominated by small expensive-if-ignored things (a privacy leak, no backups) and the bottom by the large strategic bets — the keyholder, the most important product idea on this list, scores 1.25 because it is a week of work. Nothing reaches 10.0: that would need an impact-10 job costing one unit of effort, and nothing here is both. The privacy leak at the top is the closest thing, because the fix is one line.

@@ -1,5 +1,6 @@
 // API client — talks to the Rust backend at /api/*
 import type {
+	AdminNumbers,
 	ApiError,
 	AuthPayload,
 	BoardsResponse,
@@ -131,6 +132,8 @@ export const api = {
 		}),
 	moderationQueue: () => request<ModerationQueueItem[]>('/moderation/queue'),
 	deck: () => request<DeckResponse>('/affirmations'),
+	/** Trust level 4 only; 403 for everyone else (0022). */
+	adminNumbers: () => request<AdminNumbers>('/admin/numbers'),
 	submitAffirmation: (body: string) =>
 		request<SubmitAffirmationResponse>('/affirmations', {
 			method: 'POST',
