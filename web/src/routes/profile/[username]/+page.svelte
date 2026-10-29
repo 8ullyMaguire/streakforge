@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
+	import { formatDuration, formatDurationShort } from '$lib/duration';
 	import type { Profile } from '$lib/types';
 	import { onMount } from 'svelte';
 
@@ -85,7 +86,30 @@
 					<div class="label">All-time</div>
 					<div class="value">{profile.alltime_count}</div>
 				</div>
+				<div class="stat-card">
+					<div class="label">Trust</div>
+					<div class="value gold">TL{profile.trust_level}</div>
+				</div>
+				<div class="stat-card">
+					<div class="label">Verified cage</div>
+					<div class="value green">{formatDurationShort(profile.verified_cage_secs)}</div>
+				</div>
 			</div>
+			<!-- The numbers block has to be honest about what it does not show: a missing
+			     average is "not shared", never a zero, and the count of reports is published
+			     because the average without its sample size is a headline. -->
+			<p style="color:var(--text-dim);font-size:12px;margin-top:14px;line-height:1.6;">
+				{#if profile.time_to_cum_avg_secs !== null}
+					Time to cum: <b style="color:var(--text);">{formatDuration(profile.time_to_cum_avg_secs)}</b>
+					over {profile.time_to_cum_samples} report{profile.time_to_cum_samples === 1 ? '' : 's'} —
+					shared by choice.
+				{:else if profile.time_to_cum_samples > 0}
+					Time to cum: not shared ({profile.time_to_cum_samples} report{profile.time_to_cum_samples === 1 ? '' : 's'} kept
+					private).
+				{:else}
+					No durations reported.
+				{/if}
+			</p>
 			<p style="color:var(--text-dim);font-size:12px;margin-top:14px;">
 				Forging since {new Date(profile.created_at).toLocaleDateString()}
 			</p>

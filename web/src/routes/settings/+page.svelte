@@ -13,6 +13,8 @@
 	// thing standing between "the site publishes what I write" and "it does not", so
 	// it is stated in full here rather than as a bare checkbox label.
 	let logsPublic = $state(true);
+	// Private by default — the only switch on the site whose default is "no" (0021).
+	let shareTimeToCum = $state(false);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
@@ -52,6 +54,7 @@
 			socialUrl = me.social_url ?? '';
 			const p = await api.profile(me.username);
 			logsPublic = p.logs_public;
+			shareTimeToCum = p.share_time_to_cum;
 		} catch (e) {
 			if (e instanceof ApiRequestError && e.status === 401) {
 				window.location.href = '/login';
@@ -70,7 +73,8 @@
 				display_name: displayName.trim() || undefined,
 				avatar_url: avatarUrl.trim() || undefined,
 				social_url: socialUrl.trim() || undefined,
-				logs_public: logsPublic
+				logs_public: logsPublic,
+				share_time_to_cum: shareTimeToCum
 			});
 			pushToast('Profile updated.');
 			if (me) me.username = p.username;
@@ -128,6 +132,26 @@
 						<span style="color:var(--text-dim);">
 							On by default. Turn it off and your logs stay yours — the rows and your
 							score are untouched, they just stop appearing on the feed.
+						</span>
+					</span>
+				</label>
+			</div>
+			<div class="form-row">
+				<label for="ttc-shared">Time to cum</label>
+				<label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.5;">
+					<input
+						id="ttc-shared"
+						type="checkbox"
+						bind:checked={shareTimeToCum}
+						style="margin-top:3px;width:auto;"
+					/>
+					<span>
+						<b>Let my durations feed the public averages.</b>
+						<span style="color:var(--text-dim);">
+							Off by default, and this is the one setting here that starts off. The number is
+							how long a session ran — the most personal figure the site keeps. Off, you still
+							see your own average on the numbers page; it just never enters a public average
+							or a board. The feed's confessions setting above is a separate switch.
 						</span>
 					</span>
 				</label>

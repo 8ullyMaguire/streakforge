@@ -16,6 +16,15 @@ export interface Profile {
 	/** Whether this member's confessions appear in the public feed. True by
 	 *  default; the switch lives in settings. */
 	logs_public: boolean;
+	/** Opt-in (0021): whether this member's durations reach the public averages. False by default. */
+	share_time_to_cum: boolean;
+	/** Computed trust level 0–4 (see /api/trust for the rungs in force). */
+	trust_level: number;
+	/** Peer-verified cage time. */
+	verified_cage_secs: number;
+	time_to_cum_samples: number;
+	/** Only present when the member shares their durations. */
+	time_to_cum_avg_secs: number | null;
 }
 
 export interface UserOfTheDay {
@@ -228,6 +237,8 @@ export interface EdgeEntry {
 export interface TimeToCumResponse {
 	aggregate: TimeToCumAggregate;
 	mine: TimeToCumMine | null;
+	/** Opt-in state of the signed-in member; null when signed out (0021). */
+	sharing: boolean | null;
 	board: EdgeEntry[];
 }
 

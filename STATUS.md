@@ -1,5 +1,44 @@
 # StreakForge — Development Status
 
+## 2026-10-29 (fifth pass) — the consent the brainstorm asked for, and a profile that can be read
+
+Standing instruction: finish what is left without asking. Plan:
+`docs/plans/2026-10-29-time-to-cum-consent.md`.
+
+- **Time to cum is opt-in (0021).** 0017 published every reporter's average; idea #122 called that a
+  live consent gap, and it was right. `profiles.share_time_to_cum` defaults **false** — the only
+  private-by-default switch on the site — and `time_to_cum_aggregate()` / `time_to_cum_board()` count
+  only members who opted in. The board's five-sample floor sits behind the consent gate.
+  `time_to_cum_stats()` is untouched: your own numbers are yours whether you share them or not, and
+  turning the switch off removes them from the pool without deleting a row.
+  **Stricter than the idea proposed:** #122 suggested the aggregate keep counting everyone
+  anonymously. With three members, an anonymous aggregate plus a per-person average plus a board is
+  not anonymous, so the aggregate is opt-in too. And with no one sharing, the page says "nobody
+  shares yet — zero because there is nothing to average", instead of a `coalesce(..., 0)` printing
+  "0s" as if it were a measurement.
+- **The profile carries a numbers block.** `ProfileResponse` gained `trust_level`,
+  `verified_cage_secs`, `time_to_cum_samples`, and `time_to_cum_avg_secs` (only when shared) — from
+  `trust_level()`, `cage_check_hours()` and `time_to_cum_stats()`, no new arithmetic. The page prints
+  three different sentences for three different facts: `12m 31s over 1 report — shared by choice`,
+  `not shared (1 report kept private)`, `No durations reported`.
+- **Hide a deck line where it is read.** The drill keeps each line's id and `can_review`, so a
+  level-2 voice gets `hide this line` on the card itself and an author gets `withdraw mine` — idea #4
+  of the first brainstorm list ("moderation is a destination, not a gesture"), applied where the
+  content is actually met.
+- The account export carries `share_time_to_cum` too, so a data download describes the setting as
+  well as the rows.
+
+Verified: 146 backend tests (22 unit · 11 consent · 14 guest · 66 integration · 26 routes · 7
+edge-case), 145 vitest, svelte-check 0/0, vite build clean. Live (`sf-ttc-probe.sh`): anonymous
+`samples 0 reporters 0`; a duration logged and **not** published (`mine samples 1 | aggregate 0`); the
+profile reading `avg None, samples 1`; PATCH on → `profile avg 751.0`, `public 1 / 1`; PATCH off →
+`public 0` with `mine samples still 1`. In a browser: the settings switch present and unchecked by
+default; the metrics page saying "Nobody shares yet … not because the sessions are instant"; after the
+switch, `12m 31s · 1 report` and the board's "Nobody who shares has five reported sessions yet"; the
+profile reading `TRUST TL0 · VERIFIED CAGE 0s · Time to cum: 12m 31s over 1 report — shared by
+choice`; and in the drill, `withdraw mine` → 19 lines became 18, with `hide this line` on someone
+else's. Probe account deleted; deck 18 curated, `is_leader` 0, pool empty.
+
 ## 2026-10-29 (fourth pass) — a deck the members write, and a ladder that fits the site
 
 The owner asked for two things: members should be able to add entries to the affirmation drill, and

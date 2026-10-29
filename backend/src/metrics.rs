@@ -52,6 +52,10 @@ pub struct TimeToCumResponse {
     pub aggregate: TimeToCumAggregate,
     /// The caller's own numbers, when signed in. `None` for an anonymous read.
     pub mine: Option<TimeToCumStats>,
+    /// Whether the caller's durations feed the public figures (0021). `None` signed out.
+    /// The page needs it to explain an empty board honestly: "nobody shares yet" is a
+    /// different sentence from "no data", and only one of them is true when reporters is 0.
+    pub sharing: Option<bool>,
     pub board: Vec<EdgeEntry>,
 }
 
@@ -83,6 +87,7 @@ pub async fn time_to_cum(
         .await
         .ok()
         .flatten();
+    let me_id = me.as_ref().map(|u| u.id);
     let mine = match me {
         None => None,
         Some(user) => {
@@ -112,6 +117,16 @@ pub async fn time_to_cum(
         }
     };
 
+    let sharing = match me_id {
+        None => None,
+        Some(id) => Some(
+            sqlx::query_scalar::<_, bool>("select share_time_to_cum from profiles where id = $1")
+                .bind(id)
+                .fetch_one(&state.pool)
+                .await?,
+        ),
+    };
+
     Ok(Json(TimeToCumResponse {
         aggregate: TimeToCumAggregate {
             samples,
@@ -121,6 +136,7 @@ pub async fn time_to_cum(
             reporters,
         },
         mine,
+        sharing,
         board: board
             .into_iter()
             .map(|(username, avatar_url, samples, avg_secs)| EdgeEntry {

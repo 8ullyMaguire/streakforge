@@ -2294,10 +2294,12 @@ async fn three_flags_with_one_trusted_voice_hide_a_log(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn time_to_cum_publishes_both_averages(pool: PgPool) {
-    // One member logs three times, another once. The pooled average follows the
-    // logs; the average of per-person averages gives each person one vote. The two
-    // numbers differ by design and both are published.
+async fn time_to_cum_publishes_both_averages_but_only_for_members_who_share(pool: PgPool) {
+    // One member logs three times, another once. The pooled average follows the logs; the
+    // average of per-person averages gives each person one vote. Both are published — and
+    // since 0021 only for members who opted in, which is why the consent is set here rather
+    // than assumed. The old version of this test asserted the numbers with nobody sharing
+    // and would now be asserting zeros.
     let a = profile(&pool, "ttc_a").await;
     let b = profile(&pool, "ttc_b").await;
     for secs in [600, 900, 1200] {
@@ -2314,6 +2316,18 @@ async fn time_to_cum_publishes_both_averages(pool: PgPool) {
         .await
         .unwrap();
 
+    // Nobody shares yet: the public aggregate is empty and says so with a zero count, not
+    // with a zero average that reads like a real measurement.
+    let (samples, _, _, _, reporters): (i64, f64, f64, f64, i64) = sqlx::query_as(
+        "select samples::bigint, avg_secs::float8, median_secs::float8,
+                avg_of_user_avgs_secs::float8, reporters::bigint from time_to_cum_aggregate()",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((samples, reporters), (0, 0), "no consent, no pool");
+
+    // Your own numbers are yours whatever the setting says.
     let (samples, avg, median, last): (i64, f64, f64, Option<i32>) = sqlx::query_as(
         "select samples::bigint, avg_secs::float8, median_secs::float8, last_secs from time_to_cum_stats($1)",
     )
@@ -2325,7 +2339,36 @@ async fn time_to_cum_publishes_both_averages(pool: PgPool) {
     assert!((avg - 900.0).abs() < 1e-9);
     assert!((median - 900.0).abs() < 1e-9);
     assert_eq!(last, Some(1200));
+    let (b_samples,): (i64,) = sqlx::query_as("select samples::bigint from time_to_cum_stats($1)")
+        .bind(b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(b_samples, 1, "b sees her own report without sharing it");
 
+    // One opt-in: the pool is only her three logs.
+    sqlx::query("update profiles set share_time_to_cum = true where id = $1")
+        .bind(a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (samples, pooled, _, per_user, reporters): (i64, f64, f64, f64, i64) = sqlx::query_as(
+        "select samples::bigint, avg_secs::float8, median_secs::float8,
+                avg_of_user_avgs_secs::float8, reporters::bigint from time_to_cum_aggregate()",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((samples, reporters), (3, 1));
+    assert!((pooled - 900.0).abs() < 1e-9);
+    assert!((per_user - 900.0).abs() < 1e-9);
+
+    // Both opted in: the pooled/per-person difference the owner asked for appears.
+    sqlx::query("update profiles set share_time_to_cum = true where id = $1")
+        .bind(b)
+        .execute(&pool)
+        .await
+        .unwrap();
     let (samples, pooled, median, per_user, reporters): (i64, f64, f64, f64, i64) = sqlx::query_as(
         "select samples::bigint, avg_secs::float8, median_secs::float8,
                 avg_of_user_avgs_secs::float8, reporters::bigint from time_to_cum_aggregate()",
@@ -2338,6 +2381,41 @@ async fn time_to_cum_publishes_both_averages(pool: PgPool) {
     assert!((median - 750.0).abs() < 1e-9);
     assert!((per_user - 600.0).abs() < 1e-9, "per-person: (900 + 300)/2");
     assert_eq!(reporters, 2);
+
+    // The board needs consent AND five reports. `a` has three; give `b` five and check that
+    // only she is ranked — and that revoking consent removes her without deleting a row.
+    for _ in 0..4 {
+        sqlx::query("insert into habit_logs (user_id, kind, time_to_cum_secs) values ($1, 'habit', 300)")
+            .bind(b)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let board: Vec<String> =
+        sqlx::query_scalar("select username from time_to_cum_board(10)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(board, vec!["ttc_b".to_string()], "three reports does not qualify");
+
+    sqlx::query("update profiles set share_time_to_cum = false where id = $1")
+        .bind(b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let board: Vec<String> =
+        sqlx::query_scalar("select username from time_to_cum_board(10)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(board.is_empty(), "opting out takes her off the board, logs untouched");
+
+    let (rows,): (i64,) = sqlx::query_as("select count(*) from habit_logs where user_id = $1")
+        .bind(b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 5, "the rows are still there — consent is about publication, not storage");
 }
 
 #[sqlx::test(migrations = "./migrations")]

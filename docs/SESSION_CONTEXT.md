@@ -15,13 +15,14 @@
   thinkcentre (192.168.1.13) port 8001 (systemd `streakforge.service`, binary in
   `/opt/streakforge`); public at https://streakforge.polarisocial.xyz; GitHub remote
   `github` = github.com/8ullyMaguire/streakforge.
-- **Status**: fully working + verified. **145 backend tests** (22 unit · 11 consent ·
-  14 guest · 66 integration · 25 routes · 7 streak edge cases), **145 frontend tests**,
-  migrations `0001`–`0020`, deployed and green. Since 2026-10-29 the site also has cage
+- **Status**: fully working + verified. **146 backend tests** (22 unit · 11 consent ·
+  14 guest · 66 integration · 26 routes · 7 streak edge cases), **145 frontend tests**,
+  migrations `0001`–`0021`, deployed and green. Since 2026-10-29 the site also has cage
   checks (peer-verified), trust levels with quorum moderation, time-to-cum metrics,
   public-by-default confessions with an opt-out, a one-click landing flow, a yesterday
   catch-up window, account export/erasure (`/privacy`), a member-written affirmation deck
-  with level-2 admission, and a two-band trust ladder that softens while the site is small.
+  with level-2 admission, a two-band trust ladder that softens while the site is small, and
+  an opt-in time-to-cum metric with a numbers block on every profile.
 
 ---
 

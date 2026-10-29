@@ -319,6 +319,8 @@ All timestamps are UTC. Tables live in the `public` schema.
 | provider_id | text | nullable; UNIQUE(provider, provider_id) |
 | created_at | timestamptz | NOT NULL default now() |
 | updated_at | timestamptz | NOT NULL default now() |
+| logs_public | boolean | NOT NULL default true (0017) — confessions in the public feed |
+| share_time_to_cum | boolean | NOT NULL default **false** (0021) — durations in the public averages. The only private-by-default switch on the site |
 
 Notes:
 - Local accounts: `provider='local'`, `provider_id=NULL`, keyed off unique
@@ -691,7 +693,7 @@ multiplier, streak, active_kind, denial_count, lifetime_total, last_log_at }`) �
 | Method | Path | Auth | Request | Response |
 |--------|------|------|---------|----------|
 | GET | `/profile/{username}` | — | — | `ProfileResponse` or 404 |
-| PATCH | `/profile` | ✓ | `{"username"?, "display_name"?, "avatar_url"?, "social_url"?}` | `ProfileResponse` or 400/409 |
+| PATCH | `/profile` | ✓ | `{"username"?, "display_name"?, "avatar_url"?, "social_url"?, "logs_public"?, "share_time_to_cum"?}` | `ProfileResponse` or 400/409 |
 
 `ProfileResponse`: `{ id, username, display_name, avatar_url, social_url, created_at,
 streak, longest_streak, today_count, week_count, alltime_count }`
@@ -1117,7 +1119,29 @@ server would accept it.
 
 ---
 
-### 14.7 The trust ladder has two bands (0019/0020)
+### 14.7 Time to cum is opt-in, and the profile carries the numbers (0021)
+
+The duration a member reports — start of the session to release — is the most personal figure the site
+holds. 0017 published it by default; 0021 reverses that:
+
+- `profiles.share_time_to_cum` defaults **false**, and it is the only switch on the site that starts off.
+  `logs_public` (confessions in the feed) is a separate switch with a separate default, deliberately:
+  the owner asked for public confessions, and did not ask for public durations.
+- `time_to_cum_aggregate()` and `time_to_cum_board()` count only members who share. The board keeps its
+  five-sample floor *behind* the consent gate.
+- `time_to_cum_stats(p_user)` is untouched: your own numbers are yours, and the numbers page shows them
+  whether you share them or not. Nothing hides a person's data from that person.
+- The consequence is stated, not discovered: with no one opted in the public figures are zero **and the
+  page says why** ("nobody shares yet … zero because there is nothing to average"). A
+  `coalesce(avg(...), 0)` would have printed "0s" as if it were a measurement.
+
+`ProfileResponse` gained the numbers block — `trust_level` (from `trust_level()`), `verified_cage_secs`
+(from `cage_check_hours()`), `time_to_cum_samples` (always), and `time_to_cum_avg_secs` (only when
+`share_time_to_cum`). A profile that shows only counts cannot be read: how much can be trusted of this
+person, and what has anyone actually verified, are the two questions a stranger arrives with. The page
+prints "not shared (N reports kept private)" rather than a missing or zero figure.
+
+### 14.8 The trust ladder has two bands (0019/0020)
 
 A fixed ladder written for a site of dozens makes its first two rungs unreachable on a site of three:
 the moderation queue stays empty, cage checks go unverified, and members conclude the site is dead.

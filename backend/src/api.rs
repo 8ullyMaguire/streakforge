@@ -353,6 +353,20 @@ pub struct ProfileResponse {
     /// Whether this member's confessions appear in the public feed. True by default
     /// (owner, 2026-10-29); the switch lives in settings.
     pub logs_public: bool,
+    /// Whether this member's reported durations feed the public averages (0021).
+    /// False by default — the only private-by-default switch on the site.
+    pub share_time_to_cum: bool,
+    /// The computed trust level (0–4). Part of the profile's numbers block, because a
+    /// profile that shows only counts cannot be read: how much can be trusted of this
+    /// person is the first thing a stranger wants to know.
+    pub trust_level: i32,
+    /// Peer-verified cage time, from the same function the cage page reads.
+    pub verified_cage_secs: i64,
+    /// How many durations this member has reported — always shown.
+    pub time_to_cum_samples: i64,
+    /// Their average, and only when they share it (0021). `None` is "not shared", which
+    /// the page prints as words rather than as a zero.
+    pub time_to_cum_avg_secs: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -362,6 +376,7 @@ pub struct UpdateProfileRequest {
     pub avatar_url: Option<String>,
     pub social_url: Option<String>,
     pub logs_public: Option<bool>,
+    pub share_time_to_cum: Option<bool>,
 }
 
 // ---- Rate limiting ----
@@ -1526,14 +1541,15 @@ pub async fn get_profile(
     State(state): State<AppState>,
     Path(username): Path<String>,
 ) -> ApiResult<Json<ProfileResponse>> {
-    let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime, bool)> =
+    let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime, bool, bool)> =
         sqlx::query_as(
-            "select id, username, display_name, avatar_url, social_url, created_at, logs_public from profiles where username = $1",
+            "select id, username, display_name, avatar_url, social_url, created_at, logs_public, share_time_to_cum
+               from profiles where username = $1",
         )
         .bind(&username)
         .fetch_optional(&state.pool)
         .await?;
-    let Some((id, uname, dname, av, social_url, created, logs_public)) = row else {
+    let Some((id, uname, dname, av, social_url, created, logs_public, share_time_to_cum)) = row else {
         return Err(ApiError::not_found("Profile not found"));
     };
     let (streak, longest): (i64, i64) = sqlx::query_as("select current_streak::bigint, longest_streak::bigint from user_streak($1)")
@@ -1552,6 +1568,20 @@ pub async fn get_profile(
     .fetch_one(&state.pool)
     .await?;
 
+    // The numbers block: one round trip, three functions the rest of the site already
+    // trusts. `time_to_cum_stats` is the member's own figure, so it is always counted;
+    // whether it may be PUBLISHED is `share_time_to_cum`, and that is the only branch here.
+    let (trust_level, verified_cage_secs, ttc_samples, ttc_avg): (i32, i64, i64, f64) =
+        sqlx::query_as(
+            "select (select level from public.trust_level($1)) as level,
+                    (select verified_secs::bigint from public.cage_check_hours($1)) as verified,
+                    (select samples::bigint from public.time_to_cum_stats($1)) as ttc_samples,
+                    (select avg_secs::float8 from public.time_to_cum_stats($1)) as ttc_avg",
+        )
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+
     Ok(Json(ProfileResponse {
         id,
         username: uname,
@@ -1565,6 +1595,15 @@ pub async fn get_profile(
         week_count,
         alltime_count,
         logs_public,
+        share_time_to_cum,
+        trust_level,
+        verified_cage_secs,
+        time_to_cum_samples: ttc_samples,
+        time_to_cum_avg_secs: if share_time_to_cum && ttc_samples > 0 {
+            Some(ttc_avg)
+        } else {
+            None
+        },
     }))
 }
 
@@ -1589,6 +1628,17 @@ pub async fn update_profile(
         .await?;
     if let Some(p) = body.logs_public {
         logs_public = p;
+    }
+    // Same shape for the durations: a setting the client may flip in the same request it
+    // edits anything else, and turning it OFF takes effect on the next read of the averages
+    // because the filter is inside the SQL function rather than in a handler.
+    let mut share_time_to_cum: bool =
+        sqlx::query_scalar("select share_time_to_cum from profiles where id = $1")
+            .bind(user.id)
+            .fetch_one(&state.pool)
+            .await?;
+    if let Some(v) = body.share_time_to_cum {
+        share_time_to_cum = v;
     }
 
     if let Some(u) = body.username {
@@ -1625,22 +1675,24 @@ pub async fn update_profile(
         social_url = if s.is_empty() { None } else { Some(s) };
     }
 
-    let updated = sqlx::query_as::<_, (uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime, bool)>(
+    let updated = sqlx::query_as::<_, (uuid::Uuid, String, Option<String>, Option<String>, Option<String>, OffsetDateTime, bool, bool)>(
         "update profiles set username = $1, display_name = $2, avatar_url = $3, social_url = $4,
-                logs_public = $5, updated_at = now()
-         where id = $6
-         returning id, username, display_name, avatar_url, social_url, created_at, logs_public",
+                logs_public = $5, share_time_to_cum = $6, updated_at = now()
+         where id = $7
+         returning id, username, display_name, avatar_url, social_url, created_at, logs_public,
+                   share_time_to_cum",
     )
     .bind(&username)
     .bind(&display_name)
     .bind(&avatar_url)
     .bind(&social_url)
     .bind(logs_public)
+    .bind(share_time_to_cum)
     .bind(user.id)
     .fetch_optional(&state.pool)
     .await?;
 
-    let Some((id, uname, dname, av, social_url, created, logs_public)) = updated else {
+    let Some((id, uname, dname, av, social_url, created, logs_public, share_time_to_cum)) = updated else {
         return Err(ApiError::not_found("Profile not found"));
     };
 
@@ -1675,6 +1727,17 @@ pub async fn update_profile(
     .fetch_one(&state.pool)
     .await?;
 
+    let (trust_level, verified_cage_secs, ttc_samples, ttc_avg): (i32, i64, i64, f64) =
+        sqlx::query_as(
+            "select (select level from public.trust_level($1)) as level,
+                    (select verified_secs::bigint from public.cage_check_hours($1)) as verified,
+                    (select samples::bigint from public.time_to_cum_stats($1)) as ttc_samples,
+                    (select avg_secs::float8 from public.time_to_cum_stats($1)) as ttc_avg",
+        )
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+
     Ok(Json(ProfileResponse {
         id,
         username: uname,
@@ -1688,6 +1751,15 @@ pub async fn update_profile(
         week_count,
         alltime_count,
         logs_public,
+        share_time_to_cum,
+        trust_level,
+        verified_cage_secs,
+        time_to_cum_samples: ttc_samples,
+        time_to_cum_avg_secs: if share_time_to_cum && ttc_samples > 0 {
+            Some(ttc_avg)
+        } else {
+            None
+        },
     }))
 }
 

@@ -73,6 +73,7 @@ pub async fn export(State(state): State<AppState>, session: Session) -> ApiResul
               'consented_at', p.consented_at,
               'consent_version', p.consent_version,
               'logs_public', p.logs_public,
+              'share_time_to_cum', p.share_time_to_cum,
               'merged_into', p.merged_into
             ) from public.profiles p where p.id = $1
           ),

@@ -1463,3 +1463,62 @@ async fn trust_ships_the_ladder_it_enforces(pool: PgPool) {
         "three active days is level 2 on the soft band and level 1 on the grown one"
     );
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn time_to_cum_is_opt_in_and_the_switch_is_a_setting(pool: PgPool) {
+    // 0021. The number this feature publishes is the most personal one the site holds, so the
+    // default is the refusal: no consent, no pool. The test walks the actual toggle rather
+    // than setting the column, because the column is not what a member touches.
+    let app = app(pool.clone()).await;
+    let alice = register(&app, "ttcalice").await;
+
+    let anon = json_of(get(&app, "/api/metrics/time-to-cum", None).await).await;
+    assert_eq!(anon["aggregate"]["reporters"], 0);
+    assert_eq!(anon["sharing"], serde_json::Value::Null, "signed out has no setting");
+    assert!(anon["board"].as_array().unwrap().is_empty());
+
+    let mine = json_of(get(&app, "/api/metrics/time-to-cum", Some(&alice)).await).await;
+    assert_eq!(mine["sharing"], false, "off is the default, and it says so");
+
+    // She reports a duration; it is hers to see and nobody else's to average.
+    post_json(&app, "/api/logs", &alice, r#"{"time_to_cum_secs":600}"#).await;
+    let mine = json_of(get(&app, "/api/metrics/time-to-cum", Some(&alice)).await).await;
+    assert_eq!(mine["mine"]["samples"], 1, "her own numbers, without sharing");
+    assert_eq!(mine["aggregate"]["samples"], 0, "and not in the public pool");
+
+    // The profile page carries the switch, and PATCH flips it.
+    let profile = json_of(get(&app, "/api/profile/ttcalice", None).await).await;
+    assert_eq!(profile["share_time_to_cum"], false);
+
+    let res = send(&app, "PATCH", "/api/profile", &alice, Some(r#"{"share_time_to_cum":true}"#)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_of(res).await["share_time_to_cum"], true);
+
+    let after = json_of(get(&app, "/api/metrics/time-to-cum", None).await).await;
+    assert_eq!(after["aggregate"]["samples"], 1, "her report is in the pool now");
+    assert_eq!(after["aggregate"]["reporters"], 1);
+    let mine = json_of(get(&app, "/api/metrics/time-to-cum", Some(&alice)).await).await;
+    assert_eq!(mine["sharing"], true);
+
+    // The numbers block on the profile: the average appears once she shares it, and the
+    // trust level and verified cage time are there whether or not anyone shares anything.
+    let profile = json_of(get(&app, "/api/profile/ttcalice", None).await).await;
+    assert_eq!(profile["time_to_cum_avg_secs"], 600.0);
+    assert_eq!(profile["time_to_cum_samples"], 1);
+    assert_eq!(profile["trust_level"], 0, "a fresh account is level 0, and the profile says so");
+    assert_eq!(profile["verified_cage_secs"], 0);
+
+    // Turning it off is not a delete: the report stays, the publication stops.
+    let res = send(&app, "PATCH", "/api/profile", &alice, Some(r#"{"share_time_to_cum":false}"#)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let after = json_of(get(&app, "/api/metrics/time-to-cum", None).await).await;
+    assert_eq!(after["aggregate"]["samples"], 0);
+    let mine = json_of(get(&app, "/api/metrics/time-to-cum", Some(&alice)).await).await;
+    assert_eq!(mine["mine"]["samples"], 1, "the row is still hers");
+
+    // ...and the profile stops publishing the average, without losing the count: "not
+    // shared" is a fact about four reports, not the same sentence as "no reports".
+    let profile = json_of(get(&app, "/api/profile/ttcalice", None).await).await;
+    assert_eq!(profile["time_to_cum_avg_secs"], serde_json::Value::Null);
+    assert_eq!(profile["time_to_cum_samples"], 1);
+}

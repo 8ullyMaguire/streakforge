@@ -26,10 +26,17 @@
 	// them (0019). `AFFIRMATIONS` is the offline fallback and the first paint, not the
 	// source of truth — if the fetch fails the drill still works, which is better than a
 	// page that refuses to drill because one GET went missing.
-	let deck = $state<{ text: string; source: string }[]>(AFFIRMATIONS);
-	let current = $derived(deck[index % Math.max(deck.length, 1)]?.text ?? '');
-	let matched = $derived(matchesAffirmation(typed, current));
-	let similarity = $derived(affirmationSimilarity(typed, current));
+	type DeckLine = { id: number; text: string; source: string; mine: boolean };
+	let deck = $state<DeckLine[]>(
+		AFFIRMATIONS.map((a) => ({ id: 0, text: a.text, source: a.source, mine: false }))
+	);
+	// Level 2+ may take a line out of the deck. The moderation affordance belongs where the
+	// line is read, not only on a page nobody visits — that was idea #4 of the 2026-10-29
+	// list, and the drill is exactly where a bad line is met.
+	let canReview = $state(false);
+	let current = $derived(deck[index % Math.max(deck.length, 1)]);
+	let matched = $derived(matchesAffirmation(typed, current?.text ?? ''));
+	let similarity = $derived(affirmationSimilarity(typed, current?.text ?? ''));
 
 	// Ticks the rep countdown down from the server's remaining seconds, so it
 	// moves without a reload and the REPEAT button re-enables at midnight UTC.
@@ -52,18 +59,7 @@
 		(async () => {
 			try {
 				// Independent of the stats call: a failed deck fetch must not stop drilling.
-				api
-					.deck()
-					.then((d) => {
-						const live = d.deck.map((i) => ({ text: i.body, source: i.source }));
-						if (live.length > 0) {
-							deck = live;
-							index = index % live.length;
-						}
-					})
-					.catch(() => {
-						/* the built-in deck stays */
-					});
+				loadDeck();
 				const res = await api.drill();
 				stats = res.stats;
 				receivedAt = Date.now();
@@ -77,6 +73,39 @@
 		})();
 		return () => clearInterval(t);
 	});
+
+	async function loadDeck() {
+		try {
+			const d = await api.deck();
+			const live = d.deck.map((i) => ({
+				id: i.id,
+				text: i.body,
+				source: i.source,
+				mine: i.mine
+			}));
+			canReview = d.can_review;
+			if (live.length > 0) {
+				deck = live;
+				// A hide shrinks the deck under our feet; clamp rather than skip.
+				index = Math.min(index, live.length - 1);
+			}
+		} catch {
+			/* the built-in deck stays */
+		}
+	}
+
+	async function hideCurrent() {
+		const line = current;
+		if (!line?.id) return;
+		try {
+			await api.hideAffirmation(line.id);
+			pushToast(line.mine ? 'Withdrawn from the deck.' : 'Hidden. It is out of the drill.');
+			typed = '';
+			await loadDeck();
+		} catch (e) {
+			pushToast(e instanceof Error ? e.message : 'Could not hide that line.', 'error');
+		}
+	}
 
 	function next() {
 		typed = '';
@@ -177,7 +206,7 @@
 		<div class="card" style="margin:20px 0;text-align:center;position:relative;overflow:hidden;">
 			<div class="crown" style="font-size:28px;">🖤</div>
 			<div style="font-size:20px;font-weight:700;line-height:1.4;min-height:80px;display:flex;align-items:center;justify-content:center;padding:12px 8px;">
-				{current}
+				{current?.text ?? ''}
 			</div>
 			<p style="color:var(--text-dim);font-size:12px;letter-spacing:0.12em;text-transform:uppercase;margin:0;">
 				{deck[index % Math.max(deck.length, 1)]?.source ?? 'the deck'}
@@ -229,6 +258,14 @@
 			<p style="text-align:center;font-size:11px;color:var(--text-dim);margin:10px 0 0;">
 				{deck.length} lines in the deck ·
 				<a href="/affirmations" style="color:var(--gold);">write one</a>
+				{#if current?.id && (current.mine || canReview)}
+					· <button
+						onclick={hideCurrent}
+						style="background:none;border:none;padding:0;font:inherit;color:var(--red-soft);cursor:pointer;text-decoration:underline;"
+					>
+						{current.mine ? 'withdraw mine' : 'hide this line'}
+					</button>
+				{/if}
 			</p>
 			{#if !stats.can_log && stats.next_allowed_in_secs > 0}
 				<div style="text-align:center;margin-top:10px;">

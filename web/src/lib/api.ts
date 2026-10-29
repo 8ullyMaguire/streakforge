@@ -177,6 +177,7 @@ export const api = {
 		avatar_url?: string;
 		social_url?: string;
 		logs_public?: boolean;
+		share_time_to_cum?: boolean;
 	}) =>
 		request<Profile>('/profile', { method: 'PATCH', body: JSON.stringify(data) }),
 	manifestoList: () => request<ManifestoList>('/doctrine'),

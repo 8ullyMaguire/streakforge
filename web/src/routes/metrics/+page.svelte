@@ -33,6 +33,9 @@
 		Nothing here is scored. Time to cum is self-reported: from the moment you start to the
 		moment you release, per log. Report it when logging — one click records the load, the
 		number is optional and can be added for fifteen minutes after.
+		<b>These averages include only members who turned sharing on</b> — it is off by
+		default, and it is the one setting on the site that starts off. You always see your own
+		numbers below, sharing or not.
 	</p>
 
 	{#if error}
@@ -62,6 +65,30 @@
 			</div>
 		</div>
 
+		{#if ttc.aggregate.reporters === 0}
+			<div class="card" style="padding:16px;margin-bottom:20px;">
+				<div style="font-size:13px;line-height:1.6;">
+					<b>Nobody shares yet.</b> The averages above are pooled from members who opted in,
+					and no one has — so they are zero because there is nothing to average, not because
+					the sessions are instant.
+					{#if ttc.sharing === false}
+						<a href="/settings" style="color:var(--gold);">Turn sharing on in settings</a> if you
+						want yours counted.
+					{:else if ttc.sharing === null}
+						<a href="/login" style="color:var(--gold);">Sign in</a> to share yours.
+					{:else}
+						You share yours; you are the first in the pool — one member is not an average, so
+						nothing is printed until someone joins you.
+					{/if}
+				</div>
+			</div>
+		{:else if ttc.sharing === false}
+			<div style="font-size:12px;color:var(--text-dim);margin:-6px 0 18px;">
+				You are not sharing your durations — <a href="/settings" style="color:var(--gold);">change that in settings</a>.
+				{ttc.aggregate.reporters} member{ttc.aggregate.reporters === 1 ? '' : 's'} do.
+			</div>
+		{/if}
+
 		{#if ttc.mine}
 			<div class="card" style="padding:16px;margin-bottom:20px;">
 				<div style="font-size:12px;letter-spacing:0.12em;color:var(--text-dim);margin-bottom:8px;">YOURS</div>
@@ -86,10 +113,14 @@
 			{#if ttc.board.length === 0}
 				<div class="empty">
 					<div class="big">⏱️</div>
-					Nobody has five reported sessions yet.
+					{#if ttc.aggregate.reporters === 0}
+						Nobody shares their durations yet, so there is no board to rank.
+					{:else}
+						Nobody who shares has five reported sessions yet.
+					{/if}
 					<div style="font-size:12px;margin-top:10px;">
 						The board needs five reports per person so one four-hour outlier is not a
-						ranking strategy.
+						ranking strategy, and it only ever ranks members who turned sharing on.
 					</div>
 				</div>
 			{:else}
