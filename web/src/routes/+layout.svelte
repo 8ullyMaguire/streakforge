@@ -33,6 +33,8 @@
 			<a href="/glossary" style="color:var(--text-dim);">GLOSSARY</a>
 			<span style="opacity:0.4;"> · </span>
 			<a href="/terms" style="color:var(--text-dim);">TERMS</a>
+			<span style="opacity:0.4;"> · </span>
+			<a href="/privacy" style="color:var(--text-dim);">PRIVACY</a>
 		</div>
 		<div style="color:var(--text-dim);font-size:12px;letter-spacing:0.06em;">
 			STREAKFORGE — EMBRACE DEFEAT. THE FUTURE IS BLACK.

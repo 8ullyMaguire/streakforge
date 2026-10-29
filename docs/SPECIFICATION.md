@@ -337,7 +337,11 @@ Notes:
 | logged_at | timestamptz | NOT NULL default now() |
 | note | text | check length ≤ 140 |
 | log_date | date | GENERATED ALWAYS AS ((logged_at at time zone 'utc')::date) STORED |
-| kind | text | NOT NULL default 'habit', check in ('habit','affirmation') (added in 0003) |
+| kind | text | NOT NULL default 'habit', check in ('habit','affirmation') (0003), widened to include `denial` (0004) |
+| time_to_cum_secs | integer | nullable, check 0–86400 (0017). The owner's definition: start of the session to release |
+| is_catch_up | boolean | NOT NULL default false (0018) |
+| catch_up_on | date | nullable; the UTC date the catch-up was FILED (0018). `is_catch_up` and `catch_up_on` must agree — `habit_logs_catch_up_shape` refuses half of one |
+| created_at | timestamptz | NOT NULL default now() (0018). The undo window's clock, and the order `my_recent_logs()` returns |
 
 Indexes:
 - `habit_logs_user_id_logged_at_idx` (user_id, logged_at desc)
@@ -345,6 +349,8 @@ Indexes:
 - `habit_logs_logged_at_idx` (logged_at desc)
 - `habit_logs_kind_user_logged_at_idx` (kind, user_id, logged_at desc)
 - `habit_logs_kind_log_date_idx` (kind, log_date)
+- `habit_logs_one_catch_up_per_filing_day` UNIQUE (user_id, catch_up_on) WHERE is_catch_up (0018)
+- `habit_logs_user_id_created_at_idx` (user_id, created_at desc)
 
 ### 6.3 Sessions (tower-sessions)
 
@@ -615,7 +621,7 @@ path is served too so the trap does not survive at the address people actually t
 
 | Method | Path | Auth | Request | Response |
 |--------|------|------|---------|----------|
-| POST | `/logs` | ✓ | `{"note": "...", "kind": "habit|affirmation"}` | 201 `{"stats": StatsResponse}` or 429 |
+| POST | `/logs` | ✓ | `{"note": "...", "kind": "habit|denial|affirmation", "time_to_cum_secs": 900, "day": "today|yesterday"}` | 201 `{"stats": StatsResponse}`, 429 (budget/exclusivity), 409 (catch-up rules), 400 |
 | GET | `/stats` | ✓ | — | `StatsResponse` (kind='habit') |
 | GET | `/drill` | ✓ | — | `{"stats": StatsResponse}` (kind='affirmation') |
 
@@ -628,6 +634,11 @@ path is served too so the trap does not survive at the address people actually t
   "last_60m": 0, "can_log": true, "next_allowed_at": "iso|null"
 }
 ```
+
+The catch-up window (`"day": "yesterday"`, §14.6): one per member per filing day, only
+into a day that holds nothing, judged by THAT day's budget and exclusivity rule. The row
+lands at 12:00 UTC of the day it describes with `is_catch_up = true`, and its undo window
+is measured from `created_at`, so a catch-up filed a minute ago is still editable.
 
 ### 8.3 Community
 
@@ -666,7 +677,40 @@ PATCH validation:
 - avatar_url: must start with http:// or https://; empty → None.
 - social_url: must start with http:// or https:// (DB check too); empty → None.
 
-### 8.5 Manifesto
+### 8.5 Account data (the data rights)
+
+| Method | Path | Auth | Request | Response |
+|--------|------|------|---------|----------|
+| GET | `/account/export` | ✓ | — | 200 JSON document, `Content-Disposition: attachment`, `Cache-Control: no-store` |
+| POST | `/account/erase` | ✓ + password | `{"password": "...", "confirm": "DELETE"}` | 204; 400 wrong word, 403 wrong password, 429 throttled |
+
+The export is one `json_build_object` statement over the caller's own rows: `account`,
+`logs`, `locks`, `cage_checks`, `cage_attestations_given`, `flags_filed`,
+`moderation_actions_taken`, `audit_events`, `sessions`. No `password_hash` anywhere. The
+route test asserts the section list, so a table added later without joining the export
+shows up as a failing test rather than a silent gap.
+
+Erasure deletes the profile in one transaction (every content table is
+`ON DELETE CASCADE`), clears the member's `tower_sessions.session` rows, empties the
+`detail` of their `audit_log` rows (the WHEN is kept — it is the record a deletion request
+is answered from — the contents are not), and writes one anonymous `account.erased` row
+carrying counts only. `moderation_actions.actor_id` and `audit_log.profile_id` are
+`ON DELETE SET NULL` by design: a decision about someone else's content outlives its author,
+and so does the consent record.
+
+The password is throttled by the SAME mechanism as a sign-in (`auth::throttle_verdict`,
+recorded through `auth::record_login_failure`) — a wrong password here must cost an
+attacker exactly what a wrong password at `/login` costs, or erasure becomes the cheaper
+oracle for guessing it.
+
+Retention is enforced, not merely described: `streakforge-api purge` (a mode of the same
+binary, installed by `deploy.sh` at 04:15 daily) removes guest tombstones older than
+`TOMBSTONE_RETENTION_DAYS` (365), `login_attempts` older than 30 days, and `audit_log` rows
+past a year that are neither a consent record nor an erasure. `/privacy` states these
+windows; `tests/integration.rs::the_purge_takes_only_what_is_past_its_window` proves the
+job takes exactly them.
+
+### 8.6 Manifesto
 
 | Method | Path | Auth | Response |
 |--------|------|------|----------|
@@ -1009,6 +1053,28 @@ username counter is the one that tripped:
 - **The two ceilings are deliberately different by 6×** so a household, cafe or office
   behind one address is not locked out by one person's five failed tries.
 
+### 14.6 The yesterday window (catch-up)
+
+People log the day they remember, which is often after midnight. A log may be filed for
+the previous UTC day under four rules, all enforced server-side:
+
+1. **Only yesterday.** `"day"` accepts `today` (default) or `yesterday`; anything else is
+   a 400 with the value echoed back.
+2. **Only into a gap.** If the target day holds any log at all — any kind — the request is
+   409. A catch-up repairs a missed day; it cannot top up a day that was kept.
+3. **One per filing day.** Enforced by a partial unique index
+   (`habit_logs_one_catch_up_per_filing_day`), so two concurrent requests cannot both win;
+   the endpoint maps the violation to 409 rather than a 500.
+4. **Judged by its own day.** `check_rate_limits_on(…, target_date)` applies yesterday's
+   budget and yesterday's one-way exclusivity rule. A catch-up is not a way to file
+   yesterday's sixth waste today.
+
+The row is stamped 12:00 UTC of the day it describes (the real time is unknown; midday keeps
+it unambiguously inside that date), flagged `is_catch_up`, and surfaces as `FILED LATE` on
+the feed and in the member's own history. `StatsResponse.catch_up` reports
+`{available, filed_today, yesterday_count}` so the page offers the window only when the
+server would accept it.
+
 ---
 
 ## 15. Security
@@ -1039,10 +1105,14 @@ username counter is the one that tripped:
   `__Host-` without `Secure` — over local HTTP that would mean no session at all.
   **Enabling it signs every existing user out once**, since the old name is simply
   ignored; that is the cost of the prefix and it is paid once.
-- **Notes are private by construction** (§7.4): the public feed's SQL function has no
-  note column, so no handler can leak one. The 140-character limit is enforced
-  server-side (`Note must be 140 characters or fewer`), and the deep-link page clamps
-  client-side too because a link's note is usually assembled by a script.
+- **Notes are public by default since 2026-10-29, and the switch is in SQL.** The claim
+  that used to stand here ("the feed's function has no note column") was true until 0017
+  reversed the owner's policy. What replaces it: `activity_feed()` publishes `note` only
+  where `profiles.logs_public`, so a handler cannot publish past a member's setting, and
+  the same function filters `hidden_at` so a moderated row leaves with it. The
+  140-character limit is enforced server-side (`Note must be 140 characters or fewer`),
+  and the deep-link page clamps client-side too because a link's note is usually
+  assembled by a script.
 - **`next=` on /login is an open-redirect guard**: only a same-site absolute path is
   honoured (`/…`, never `//host` or a scheme), tested in `deeplink.test.ts`.
 - **The 18+ overlay is NOT access control** and the terms say so: it stores a marker

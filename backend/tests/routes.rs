@@ -641,7 +641,12 @@ async fn a_log_can_be_given_a_duration_and_undone_inside_the_window(pool: PgPool
     let res = post_json(&app, "/api/logs", &cookie, r#"{"kind":"habit"}"#).await;
     let body = json_of(res).await;
     let log_id = body["stats"]["recent_logs"][0]["id"].as_i64().unwrap();
-    sqlx::query("update habit_logs set logged_at = now() - interval '20 minutes' where id = $1")
+    // `created_at` is the clock the undo window reads (0018): a log's age is how
+    // long ago it was WRITTEN, not how long ago the day it describes was. Moving
+    // only `logged_at` no longer expires the window, and this test is the proof.
+    sqlx::query(
+        "update habit_logs set logged_at = now() - interval '20 minutes', created_at = now() - interval '20 minutes' where id = $1",
+    )
         .bind(log_id)
         .execute(&pool)
         .await
@@ -819,4 +824,301 @@ async fn trust_and_the_new_boards_are_readable(pool: PgPool) {
     let body = json_of(res).await;
     assert_eq!(body["aggregate"]["samples"], 0);
     assert!(body["mine"].is_null(), "an anonymous read has no personal block");
+}
+
+// ---------------------------------------------------------------------------
+// 2026-10-29 (later) — the yesterday window, the export, the erasure.
+// ---------------------------------------------------------------------------
+
+/// The catch-up: legal once, for yesterday, only into an empty day, and judged by
+/// yesterday's budget rather than today's.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_catch_up_fills_yesterday_once_and_answers_to_its_own_day(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let cookie = register(&app, "latecomer").await;
+
+    // The server tells the page whether the window is open; the page does not guess.
+    let body = json_of(get(&app, "/api/stats", Some(&cookie)).await).await;
+    assert_eq!(body["catch_up"]["available"], true);
+    assert_eq!(body["catch_up"]["yesterday_count"], 0);
+
+    let res = post_json(&app, "/api/logs", &cookie, r#"{"kind":"habit","day":"yesterday"}"#).await;
+    assert_eq!(res.status(), StatusCode::CREATED, "the catch-up itself");
+    let after = json_of(get(&app, "/api/stats", Some(&cookie)).await).await;
+    assert_eq!(after["catch_up"]["available"], false, "one a day, and it is spent");
+    assert_eq!(after["catch_up"]["filed_today"], true);
+    assert_eq!(after["catch_up"]["yesterday_count"], 1);
+    let body = json_of(res).await;
+    let log = &body["stats"]["recent_logs"][0];
+    assert_eq!(log["catch_up"], true, "the row is labelled: {log}");
+    assert_eq!(
+        body["stats"]["today_count"], 0,
+        "it belongs to yesterday, so today's count stays 0"
+    );
+    assert_eq!(body["stats"]["current_streak"], 1, "and the streak is repaired");
+
+    // Yesterday, in the database, is where it landed.
+    let yesterday = time::OffsetDateTime::now_utc()
+        .date()
+        .previous_day()
+        .unwrap();
+    let (count,): (i64,) = sqlx::query_as(
+        "select count(*) from habit_logs where log_date = $1 and is_catch_up",
+    )
+    .bind(yesterday)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 1);
+
+    // The undo window follows the writing, not the day described.
+    let id = log["id"].as_i64().unwrap();
+    let res = send(
+        &app,
+        "PATCH",
+        &format!("/api/logs/{id}"),
+        &cookie,
+        Some(r#"{"time_to_cum_secs":600}"#),
+    )
+    .await;
+    assert_eq!(
+        res.status(),
+        StatusCode::OK,
+        "a catch-up written a second ago is still inside its own 15 minutes"
+    );
+
+    // Once per filing day.
+    let res = post_json(&app, "/api/logs", &cookie, r#"{"kind":"denial","day":"yesterday"}"#).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    // A day that already has a log has no gap to fill.
+    let other = register(&app, "alreadykept").await;
+    let res = post_json(&app, "/api/logs", &other, r#"{"kind":"habit"}"#).await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    sqlx::query("update habit_logs set logged_at = now() - interval '1 day' where id = (select max(l.id) from habit_logs l join profiles p on p.id = l.user_id where p.username = 'alreadykept')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = post_json(&app, "/api/logs", &other, r#"{"kind":"habit","day":"yesterday"}"#).await;
+    assert_eq!(
+        res.status(),
+        StatusCode::CONFLICT,
+        "a catch-up fills a gap; it does not add to a day that was kept"
+    );
+
+    // Only ever yesterday, and only those two words.
+    let res = post_json(&app, "/api/logs", &other, r#"{"kind":"habit","day":"2026-01-01"}"#).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // Yesterday's budget is what a catch-up spends: five wastes already there
+    // means the sixth is refused, exactly as it would have been that day.
+    let budgeted = register(&app, "budgetyesterday").await;
+    let uid: uuid::Uuid =
+        sqlx::query_scalar("select id from profiles where username = 'budgetyesterday'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    for _ in 0..5 {
+        // Yesterday at 12:00 UTC, which is the day being tested — `now() - 1 day
+        // + 12 hours` lands on TODAY at 08:00 and tests nothing.
+        sqlx::query(
+            "insert into habit_logs (user_id, kind, logged_at)
+             values ($1, 'habit',
+                     (((now() at time zone 'utc')::date - 1)::timestamp at time zone 'utc')
+                     + interval '12 hours')",
+        )
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // Five rows for yesterday means there is no gap; the day check fires first,
+    // so prove the budget rule on a day with four rows and one space.
+    sqlx::query("delete from habit_logs where id = (select max(id) from habit_logs where user_id = $1)")
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = post_json(&app, "/api/logs", &budgeted, r#"{"kind":"habit","day":"yesterday"}"#).await;
+    assert_eq!(
+        res.status(),
+        StatusCode::CONFLICT,
+        "four rows is still a kept day: the gap rule is checked before the budget"
+    );
+}
+
+/// The export: everything, only the caller's, and as a download.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_export_holds_everything_and_only_your_own(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let cookie = register(&app, "exportee").await;
+    let other = register(&app, "bystander").await;
+
+    for c in [&cookie, &other] {
+        let res = post_json(&app, "/api/logs", c, r#"{"kind":"habit","note":"mine"}"#).await;
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+    let res = post_json(&app, "/api/lock", &cookie, "{}").await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let res = post_json(&app, "/api/cage-check", &cookie, "{}").await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let res = get(&app, "/api/account/export", None).await;
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "no session, no export");
+
+    let res = get(&app, "/api/account/export", Some(&cookie)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let disposition = res
+        .headers()
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        disposition.starts_with("attachment; filename=\"streakforge-exportee-"),
+        "the document arrives as a download: {disposition}"
+    );
+    let body = json_of(res).await;
+
+    assert_eq!(body["format"], "streakforge.account.v1");
+    assert_eq!(body["account"]["username"], "exportee");
+    assert!(
+        body["account"].get("password_hash").is_none(),
+        "the hash is not part of anyone's data"
+    );
+    for section in [
+        "logs",
+        "locks",
+        "cage_checks",
+        "cage_attestations_given",
+        "flags_filed",
+        "moderation_actions_taken",
+        "audit_events",
+        "sessions",
+    ] {
+        assert!(
+            body.get(section).is_some(),
+            "the export is missing its `{section}` section"
+        );
+    }
+    assert_eq!(body["logs"].as_array().unwrap().len(), 1);
+    assert_eq!(body["locks"].as_array().unwrap().len(), 1);
+    assert_eq!(body["cage_checks"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        body["logs"][0]["note"], "mine",
+        "the caller's own note travels with it"
+    );
+    assert!(
+        !body.to_string().contains("bystander"),
+        "another member's rows must not appear anywhere in the document"
+    );
+}
+
+/// The erasure: password, a typed word, rows gone, one anonymous record left.
+#[sqlx::test(migrations = "./migrations")]
+async fn erasing_an_account_removes_its_data_and_keeps_only_an_anonymous_record(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let cookie = register(&app, "eraseme").await;
+    let uid: uuid::Uuid = sqlx::query_scalar("select id from profiles where username = 'eraseme'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    post_json(&app, "/api/logs", &cookie, r#"{"kind":"habit","note":"gone"}"#).await;
+    post_json(&app, "/api/lock", &cookie, "{}").await;
+    let res = post_json(&app, "/api/cage-check", &cookie, "{}").await;
+    let check_id = json_of(res).await["id"].as_i64().unwrap();
+    let other: uuid::Uuid =
+        sqlx::query_scalar("insert into profiles (username) values ('survivor') returning id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    // A decision this member took about someone else's content: it must survive
+    // the erasure with a null actor, because it is a record about the content.
+    sqlx::query(
+        "insert into moderation_actions (actor_id, action, target_kind, target_id, note)
+         values ($1, 'hide', 'cage_check', $2, 'test')",
+    )
+    .bind(uid)
+    .bind(check_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Two refusals first.
+    let res = post_json(&app, "/api/account/erase", &cookie, r#"{"password":"x","confirm":"yes"}"#).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST, "the word has to be typed");
+    let res = post_json(&app, "/api/account/erase", &cookie, r#"{"password":"wrong-password","confirm":"DELETE"}"#).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN, "the password is the proof");
+    let still: i64 = sqlx::query_scalar("select count(*) from profiles where id = $1")
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(still, 1, "a refused erasure erases nothing");
+
+    let res = post_json(
+        &app,
+        "/api/account/erase",
+        &cookie,
+        r#"{"password":"correct-horse-battery","confirm":"DELETE"}"#,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT, "with both, it goes");
+
+    for (table, column) in [
+        ("habit_logs", "user_id"),
+        ("lock_sessions", "user_id"),
+        ("cage_checks", "user_id"),
+    ] {
+        let left: i64 = sqlx::query_scalar(&format!(
+            "select count(*) from {table} where {column} = $1"
+        ))
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, 0, "{table} rows must be gone");
+    }
+    let profile: i64 = sqlx::query_scalar("select count(*) from profiles where id = $1")
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(profile, 0);
+
+    // The record that survives says what was erased, never who.
+    let (detail, count): (serde_json::Value, i64) = sqlx::query_as(
+        "select detail, count(*) over () from audit_log
+          where action = 'account.erased' order by id desc limit 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 1, "one anonymous row");
+    assert_eq!(detail["logs"], 1);
+    assert!(
+        !detail.to_string().contains("eraseme"),
+        "the erasure record must not contain the erased username"
+    );
+
+    // The moderation decision survives, with no actor.
+    let actor: Option<uuid::Uuid> =
+        sqlx::query_scalar("select actor_id from moderation_actions order by id desc limit 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(actor.is_none(), "the action stays, the actor does not");
+
+    // The session is gone too: the cookie no longer authenticates.
+    let res = get(&app, "/api/auth/me", Some(&cookie)).await;
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // And nothing else was touched: the bystander and their rows are intact.
+    let survivors: i64 = sqlx::query_scalar("select count(*) from profiles where id = $1")
+        .bind(other)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(survivors, 1);
 }

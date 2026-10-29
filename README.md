@@ -75,6 +75,15 @@ Plus `STATUS.md` for the living dev-status checklist.
   computed from activity (never stored, except the leader flag); three flags with at
   least one trusted voice hide content, two restore votes bring it back, leaders can
   act alone, and every action is written to `moderation_actions`.
+- **A yesterday window** — a log may be filed for the previous UTC day once per filing
+  day, and only into a day that holds nothing: the streak gets repaired, not padded. The
+  row is labelled "filed late" on the feed, and it answers to *yesterday's* budget.
+- **Data rights, both directions** — `GET /api/account/export` hands back one JSON
+  document (account, logs, locks, cage checks, attestations, flags, actions, audit
+  events); `POST /api/account/erase` deletes the account and everything cascading from it
+  after the password and a typed `DELETE`, keeps one anonymous record that an erasure
+  happened, and clears the member's sessions. `/privacy` states all of it, including the
+  retention windows a nightly `streakforge-api purge` enforces.
 - **Time to cum** — a per-log duration (start of the session to release), with a
   per-person average, a pooled average *and* an average of per-person averages on
   `/metrics`, because one heavy logger should not define the site.
@@ -222,6 +231,7 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | POST   | `/api/logs`               | ✓    | Log a completion (rate-limited, `kind` = habit|denial|affirmation, optional `time_to_cum_secs`) |
 | PATCH  | `/api/logs/{id}`          | ✓    | In-window (15 min) duration edit; 403 after     |
 | DELETE | `/api/logs/{id}`          | ✓    | In-window undo; 403 after                         |
+| POST   | `/api/logs` `day:yesterday` | ✓  | Catch-up for the previous UTC day (409/429 rules) |
 | GET    | `/api/stats`              | ✓    | Personal habit stats + recent logs         |
 | GET    | `/api/drill`              | ✓    | Affirmation drill stats (separate budget)  |
 | GET    | `/api/leaderboard/{period}` | —  | daily / weekly / alltime             |
@@ -244,6 +254,8 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | POST   | `/api/flags`              | ✓    | Flag a log/cage check (TL ≥ 1) |
 | GET    | `/api/moderation/queue`   | ✓    | Flagged targets (TL ≥ 2) |
 | POST   | `/api/moderation/action`  | ✓    | Hide (TL 4) / restore (2 votes or TL 4) |
+| GET    | `/api/account/export`     | ✓    | Every row the site holds about you, as a JSON download |
+| POST   | `/api/account/erase`      | ✓    | Password + typed DELETE; irreversible |
 
 ## Business Logic
 

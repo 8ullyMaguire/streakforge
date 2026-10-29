@@ -1,5 +1,57 @@
 # StreakForge — Development Status
 
+## 2026-10-29 (third pass) — the yesterday window, and the data rights the terms promised
+
+Two things: a log may now be filed for yesterday (idea #110), and the member can take their
+data away or have it erased (idea #111 plus the erasure the terms already described). Plan:
+`docs/plans/2026-10-29-catch-up-and-gdpr.md`.
+
+- **The catch-up** (`POST /api/logs {"day":"yesterday"}`): one per member per FILING day, only
+  into a day that holds nothing (otherwise 409 — "it fills a gap, it cannot add to a day you
+  kept"), and judged by **that day's** budget and exclusivity rule via
+  `check_rate_limits_on(…, target_date)`. The row lands at 12:00 UTC of the day it describes
+  with `is_catch_up`, and the 15-minute undo now reads `created_at` — a catch-up describes
+  yesterday but was written now, and the window is about the writing.
+- **One per day is an index, not a check.** `habit_logs_one_catch_up_per_filing_day`
+  (partial unique) is what the 409 maps from, so two concurrent requests cannot both win.
+  A shape constraint refuses `is_catch_up` without `catch_up_on`.
+- **Export** (`GET /api/account/export`): one `json_build_object` statement over the caller's
+  own rows — account, logs, locks, cage checks, attestations given, flags filed, actions
+  taken, audit events, session count — served as an attachment with `no-store`. No
+  `password_hash`. The route test asserts the section list, so a new table that the export
+  forgets is a failing test rather than a silent gap.
+- **Erasure** (`POST /api/account/erase`): password + the word `DELETE`, then one
+  transaction — session rows cleared, `audit_log.detail` emptied (the WHEN is kept; it is the
+  record a deletion request is answered from), profile deleted (cascading to logs, locks,
+  checks, attestations, flags), one anonymous `account.erased` row carrying counts only.
+  `moderation_actions` keeps the action with a null actor: a decision about someone else's
+  content outlives its author.
+- **The password answers to the sign-in throttle**, not a laxer one written for this endpoint
+  — a wrong password here must cost an attacker what a wrong password at `/login` costs, or
+  erasure becomes the cheaper oracle. (The first version recorded failures with a NULL
+  `login_attempts.ip`, which is NOT NULL, so the insert was swallowed and the throttle never
+  counted. The purge test found it: `23502 null value in column "ip"`.)
+- **The feed says when a row was filed late** (`activity_feed` grew `catch_up`, which required
+  `drop function` — `create or replace` cannot widen an OUT list, 42P13).
+- **Retention is enforced**: `streakforge-api purge` (a mode of the same binary, cron 04:15 via
+  `deploy.sh`) removes guest tombstones older than 365 days, `login_attempts` past 30,
+  and audit rows past a year except consent and erasure records. `/privacy` states every
+  window it enforces, and says what the site cannot do — no email means no reset and no
+  receipt, nothing is end-to-end encrypted, and deletion is irreversible.
+
+Verified: 22 unit + 11 consent + 13 guest + 63 integration + 18 routes + 7 edge-case,
+135 vitest, svelte-check 0/0, vite build clean. Live: the catch-up filed 201 with
+`logged_at: 2026-10-28T12:00:00Z`, `today_count: 0`, `current_streak: 1`, a second attempt
+409 and a named day 400; the export arrived as
+`attachment; filename="streakforge-<user>-2026-10-29.json"` with all eight sections and no
+hash; erase answered 400 / 403 / 204 and the cookie 401'd afterwards, after which the prod
+row count and `/api/total` returned to their pre-probe values and the only trace was one
+anonymous `account.erased` row; `./streakforge-api purge` on the host printed
+`{"audit_rows":0,"guest_tombstones":0,"login_attempts":0}` (nothing is old enough yet). In a
+browser: the "YESTERDAY IS EMPTY" card moved the streak 0 → 1 and replaced itself with
+"Catch-up used today", the erase button stayed disabled until `DELETE` was typed, and
+`/privacy` rendered its seven sections.
+
 ## 2026-10-29 (later) — cage checks, quorum moderation, time to cum, public confessions
 
 Four asks in one pass, plus the one-click landing flow and the reversal that a confession is

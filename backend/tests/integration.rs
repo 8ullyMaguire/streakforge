@@ -1992,7 +1992,8 @@ async fn public_function_signatures_are_pinned(pool: PgPool) {
     let expected: [(&str, &str); 5] = [
         (
             "activity_feed",
-            "TABLE(id bigint, user_id uuid, username text, display_name text, avatar_url text, kind text, note text, logged_at timestamp with time zone)",
+            // 0018 appended `catch_up`: a backdated log says so on the wall.
+            "TABLE(id bigint, user_id uuid, username text, display_name text, avatar_url text, kind text, note text, logged_at timestamp with time zone, catch_up boolean)",
         ),
         (
             "devotion_index",
@@ -2397,4 +2398,155 @@ async fn the_feed_publishes_confessions_until_the_author_opts_out(pool: PgPool) 
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].0, "habit");
+}
+
+// ---------------------------------------------------------------------------
+// 2026-10-29 (later) — the catch-up window and the data-rights columns.
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "./migrations")]
+async fn one_catch_up_per_filing_day_is_the_index(pool: PgPool) {
+    // The endpoint reports 409; this is the guarantee behind it, so a race has
+    // something to collide with rather than a check-then-insert to lose.
+    let uid = insert_aged_user(&pool, "catch_up_once").await;
+    let today: time::Date = time::OffsetDateTime::now_utc().date();
+    let yesterday = today.previous_day().unwrap();
+
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, logged_at, is_catch_up, catch_up_on)
+         values ($1, 'habit', $2, true, $3)",
+    )
+    .bind(uid)
+    .bind(yesterday.midnight().assume_utc() + time::Duration::hours(12))
+    .bind(today)
+    .execute(&pool)
+    .await
+    .expect("the first catch-up is legal");
+
+    let second = sqlx::query(
+        "insert into habit_logs (user_id, kind, logged_at, is_catch_up, catch_up_on)
+         values ($1, 'denial', $2, true, $3)",
+    )
+    .bind(uid)
+    .bind(yesterday.midnight().assume_utc() + time::Duration::hours(13))
+    .bind(today)
+    .execute(&pool)
+    .await;
+    assert!(
+        second.is_err(),
+        "a second catch-up filed the same day must violate the partial unique index"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_catch_up_flag_without_its_filing_date_is_refused(pool: PgPool) {
+    // The shape constraint: half the bookkeeping is worse than none of it, because
+    // the uniqueness rule silently stops applying.
+    let uid = insert_aged_user(&pool, "catch_up_shape").await;
+    let bad = sqlx::query(
+        "insert into habit_logs (user_id, kind, is_catch_up, catch_up_on)
+         values ($1, 'habit', true, null)",
+    )
+    .bind(uid)
+    .execute(&pool)
+    .await;
+    assert!(bad.is_err(), "is_catch_up without catch_up_on must be refused");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_feed_labels_a_backdated_log(pool: PgPool) {
+    let uid = insert_aged_user(&pool, "latefiler").await;
+    let today: time::Date = time::OffsetDateTime::now_utc().date();
+    let yesterday = today.previous_day().unwrap();
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, note, logged_at, is_catch_up, catch_up_on)
+         values ($1, 'habit', 'filed late', $2, true, $3)",
+    )
+    .bind(uid)
+    .bind(yesterday.midnight().assume_utc() + time::Duration::hours(12))
+    .bind(today)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let rows: Vec<(Option<String>, bool)> =
+        sqlx::query_as("select note, catch_up from activity_feed(0, 10)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0.as_deref(), Some("filed late"));
+    assert!(rows[0].1, "the wall says the row was filed late");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_purge_takes_only_what_is_past_its_window(pool: PgPool) {
+    // The retention sentence on /privacy is only true if something enforces it, so
+    // this is the something: old folded tombstones, spent throttle rows, and audit
+    // rows that are neither a consent record nor an erasure.
+    let keeper: uuid::Uuid =
+        sqlx::query_scalar("insert into profiles (username) values ('keeper') returning id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "insert into profiles (username, is_guest, merged_into, created_at)
+         values ('old_tombstone', true, $1, now() - interval '400 days')",
+    )
+    .bind(keeper)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "insert into profiles (username, is_guest, merged_into)
+         values ('young_tombstone', true, $1)",
+    )
+    .bind(keeper)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // `ip` is NOT NULL, which is the reason the erasure records a failure through
+    // `record_login_failure` rather than a hand-written insert.
+    sqlx::query("insert into login_attempts (username, ip, attempted_at) values ('a', 'test', now() - interval '40 days'), ('b', 'test', now())")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for (action, days) in [("consent.accepted", 800), ("account.erased", 800), ("board.viewed", 800), ("board.viewed", 1)] {
+        sqlx::query(
+            "insert into audit_log (action, detail, at) values ($1, '{}'::jsonb, now() - make_interval(days => $2))",
+        )
+        .bind(action)
+        .bind(days)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let removed = streakforge_api::account::purge_expired(&pool, 365).await.unwrap();
+    assert_eq!(removed["guest_tombstones"], 1, "only the old tombstone went");
+    assert_eq!(removed["login_attempts"], 1, "only the spent throttle row went");
+    assert_eq!(removed["audit_rows"], 1, "only the old non-record audit row went");
+
+    let names: Vec<String> = sqlx::query_scalar("select username from profiles order by username")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(names, vec!["keeper".to_string(), "young_tombstone".to_string()]);
+
+    let kept_actions: Vec<String> =
+        sqlx::query_scalar("select action from audit_log order by action")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        kept_actions,
+        vec![
+            "account.erased".to_string(),
+            "board.viewed".to_string(),
+            "consent.accepted".to_string()
+        ],
+        "the consent record and the erasure record outlive the window; the rest do not"
+    );
 }

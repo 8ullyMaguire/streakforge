@@ -6,6 +6,7 @@
 	import StreakCalendar from '$lib/components/StreakCalendar.svelte';
 	import { budgetLabel, formatCountdown } from '$lib/countdown';
 	import { decayNotice, decayStyle } from '$lib/decay';
+	import { pushToast } from '$lib/toasts.svelte';
 	import { todayLine } from '$lib/today';
 	import type { TodayCounts } from '$lib/today';
 
@@ -71,6 +72,23 @@
 			error = e instanceof Error ? e.message : 'Failed to load stats';
 		}
 	});
+
+	// The yesterday window. One per filing day, and only into a day that holds
+	// nothing — the server checks both, so this is a straight POST and a redraw.
+	let catchingUp = $state(false);
+	async function catchUp(kind: 'habit' | 'denial') {
+		if (catchingUp) return;
+		catchingUp = true;
+		try {
+			const res = await api.logHabit(undefined, kind, undefined, 'yesterday');
+			handleLogged(res.stats);
+			pushToast(kind === 'denial' ? 'Denial filed for yesterday.' : 'Load filed for yesterday.', 'success');
+		} catch (e) {
+			pushToast(e instanceof Error ? e.message : 'Could not file that.', 'error');
+		} finally {
+			catchingUp = false;
+		}
+	}
 
 	function handleLogged(s: Stats) {
 		stats = s;
@@ -212,6 +230,33 @@
 				<div class="value">{stats.alltime_count}</div>
 			</div>
 		</div>
+
+		<!--
+			YESTERDAY IS EMPTY. A member who remembers the day after it closes had no
+			path but a broken streak. The window is deliberately narrow and says so:
+			one catch-up per filing day, and only into a day with nothing in it.
+		-->
+		{#if stats.catch_up.available}
+			<div class="card" style="margin:0 0 18px;padding:14px 16px;">
+				<div style="font-size:11px;letter-spacing:0.12em;color:var(--gold);">YESTERDAY IS EMPTY</div>
+				<div style="font-size:13px;color:var(--text-dim);margin-top:6px;line-height:1.55;">
+					Days are UTC and it is already the next one. One catch-up is allowed per day, and it
+					fills a gap — it cannot add to a day you already kept.
+				</div>
+				<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+					<button class="btn btn-red" style="padding:5px 14px;font-size:12px;" onclick={() => catchUp('habit')} disabled={catchingUp}>
+						WASTE FOR YESTERDAY
+					</button>
+					<button class="btn btn-ghost" style="padding:5px 14px;font-size:12px;" onclick={() => catchUp('denial')} disabled={catchingUp}>
+						DENIAL FOR YESTERDAY
+					</button>
+				</div>
+			</div>
+		{:else if stats.catch_up.filed_today}
+			<div style="margin:0 0 18px;font-size:12px;color:var(--text-dim);">
+				Catch-up used today — one a day, and it is spent.
+			</div>
+		{/if}
 
 		<!--
 			Each kind's own streak. One combined number hid the one-way rule that the

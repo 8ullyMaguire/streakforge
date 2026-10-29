@@ -138,14 +138,18 @@ set -e
 mkdir -p "\$HOME/backups/streakforge"
 chmod 700 "\$HOME/backups/streakforge"
 {
-  crontab -l 2>/dev/null | grep -v 'backup-db.sh\|restore-db.sh' || true
+  crontab -l 2>/dev/null | grep -v 'backup-db.sh\|restore-db.sh\|streakforge-api purge' || true
   echo "30 3 * * * $BIN_DIR/backup-db.sh >> \$HOME/backups/streakforge/cron.log 2>&1"
   echo "30 4 1 * * $BIN_DIR/restore-db.sh >> \$HOME/backups/streakforge/rehearsal.log 2>&1"
+  # The retention windows on /privacy are a promise, so something has to enforce
+  # them: guest tombstones, throttle rows and non-consent audit rows past their
+  # year. 04:15, after the dump and before the monthly rehearsal.
+  echo "15 4 * * * cd $BIN_DIR && ./streakforge-api purge >> \$HOME/backups/streakforge/purge.log 2>&1"
 } > /tmp/cron.streakforge
 crontab /tmp/cron.streakforge
 rm -f /tmp/cron.streakforge
 echo "    installed:"
-crontab -l | grep -E 'backup-db.sh|restore-db.sh' | sed 's/^/      /'
+crontab -l | grep -E 'backup-db.sh|restore-db.sh|purge' | sed 's/^/      /'
 REMOTE
 
 echo "==> 6/6 Installing nginx site (port 8001) — SKIPPED: backend serves static + API directly on 8001 (mirrors fichub, which serves on 8000 itself)"

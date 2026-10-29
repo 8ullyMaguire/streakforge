@@ -69,6 +69,12 @@ pub struct LogRequest {
     /// demand a number, and an empty report is not a missing value to guess at.
     #[serde(default)]
     pub time_to_cum_secs: Option<i64>,
+    /// Which UTC day the log belongs to: `"today"` (the default) or `"yesterday"`.
+    /// Yesterday is the catch-up window — one per member per filing day, only when
+    /// that day is otherwise empty, so a forgotten log repairs the streak instead
+    /// of inventing history. Anything else is a 400.
+    #[serde(default)]
+    pub day: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -157,6 +163,10 @@ pub struct StatsResponse {
     pub milestones: Vec<MilestoneTier>,
     /// True when skipping today costs the multiplier the member already earned.
     pub at_risk: AtRisk,
+    /// The catch-up window, as the server sees it: whether yesterday is empty (the
+    /// only case a catch-up may fill) and whether one has already been filed today.
+    /// Sent rather than inferred in the UI, because the rule is a database fact.
+    pub catch_up: CatchUpState,
     /// Whiteboi Devotion Index for this user (all-time), decomposed.
     pub devotion: DevotionIndexResponse,
 }
@@ -183,6 +193,14 @@ pub struct MilestoneTier {
     pub days: i64,
     pub multiplier: f64,
     pub reached: bool,
+}
+
+/// Whether the member may file a log for yesterday, and why not.
+#[derive(Debug, Serialize, Clone)]
+pub struct CatchUpState {
+    pub available: bool,
+    pub filed_today: bool,
+    pub yesterday_count: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -232,6 +250,11 @@ pub struct FeedItem {
     pub avatar_url: Option<String>,
     pub logged_at: String,
     pub note: Option<String>,
+    /// True when the row was filed late for the day it describes. Labelled in the
+    /// caller's own history and on the feed, because a backdated row that looks
+    /// ordinary is a small lie the site does not need to tell.
+    #[serde(default)]
+    pub catch_up: bool,
 }
 
 /// A log as the PUBLIC feed shows it: no note.
@@ -256,6 +279,9 @@ pub struct PublicFeedItem {
     /// excludes.
     pub note: Option<String>,
     pub logged_at: String,
+    /// Filed late for the day it describes — the wall shows it, because the wall
+    /// claims to be what happened and a backdated row is part of the record.
+    pub catch_up: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -399,8 +425,33 @@ pub async fn check_rate_limits(
     kind: LogKind,
     wlw_daily_limit: i64,
 ) -> ApiResult<()> {
+    check_rate_limits_on(
+        pool,
+        user_id,
+        kind,
+        wlw_daily_limit,
+        OffsetDateTime::now_utc().date(),
+    )
+    .await
+}
+
+/// The same rule, judged against a named UTC date.
+///
+/// `for_date` exists for the catch-up window: a log filed for yesterday answers to
+/// yesterday's budget and yesterday's exclusivity rule, not today's.
+pub async fn check_rate_limits_on(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+    kind: LogKind,
+    wlw_daily_limit: i64,
+    for_date: time::Date,
+) -> ApiResult<()> {
     let now = OffsetDateTime::now_utc();
-    let today_start = now.date().midnight().assume_utc();
+    // The day being written to, not necessarily today: a catch-up log answers to
+    // the budget and the exclusivity rule of the day it describes. Judging a
+    // backdated waste by today's counter would let a member file the sixth waste
+    // of yesterday through the catch-up door.
+    let today_start = for_date.midnight().assume_utc();
 
     // Counts for the current UTC day, per kind. `habits_today` is the only one
     // the exclusivity rule reads now — see the direction note below.
@@ -529,15 +580,87 @@ pub async fn log_habit(
         }
     };
 
-    check_rate_limits(&state.pool, user.id, kind, state.cfg.wlw_daily_limit).await?;
+    // ---- Which day is this? ------------------------------------------------
+    // `today` is the ordinary path. `yesterday` is the catch-up window, and it is
+    // deliberately narrow: it fills a GAP, so it is refused when that day already
+    // has any log at all. A member who logged once yesterday cannot add a second
+    // one from today; that would be a claim with nothing behind it, and the budget
+    // is per day, not per mood.
+    let today = time::OffsetDateTime::now_utc().date();
+    let (target_date, is_catch_up) = match body.day.as_deref().unwrap_or("today") {
+        "today" | "" => (today, false),
+        "yesterday" => (
+            today.previous_day().ok_or_else(|| {
+                ApiError::bad_request("There is no yesterday before the first day")
+            })?,
+            true,
+        ),
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "day must be \"today\" or \"yesterday\", not {other:?}"
+            )))
+        }
+    };
 
-    sqlx::query("insert into habit_logs (user_id, note, kind, time_to_cum_secs) values ($1, $2, $3, $4)")
+    if is_catch_up {
+        let already: i64 = sqlx::query_scalar(
+            "select count(*) from habit_logs where user_id = $1 and log_date = $2",
+        )
         .bind(user.id)
-        .bind(note)
-        .bind(kind.as_str())
-        .bind(ttc)
-        .execute(&state.pool)
+        .bind(target_date)
+        .fetch_one(&state.pool)
         .await?;
+        if already > 0 {
+            return Err(ApiError::conflict(
+                "That day already has a log. A catch-up fills a gap — it cannot add to a day you kept.",
+            ));
+        }
+    }
+
+    check_rate_limits_on(
+        &state.pool,
+        user.id,
+        kind,
+        state.cfg.wlw_daily_limit,
+        target_date,
+    )
+    .await?;
+
+    // A catch-up is stamped at midday of the day it describes: the real time is
+    // unknown, and midday keeps it unambiguously inside that UTC date.
+    let logged_at: Option<OffsetDateTime> = if is_catch_up {
+        Some(target_date.midnight().assume_utc() + time::Duration::hours(12))
+    } else {
+        None
+    };
+
+    let insert = sqlx::query(
+        "insert into habit_logs
+            (user_id, note, kind, time_to_cum_secs, logged_at, is_catch_up, catch_up_on)
+         values ($1, $2, $3, $4, coalesce($5, now()), $6, $7)",
+    )
+    .bind(user.id)
+    .bind(note)
+    .bind(kind.as_str())
+    .bind(ttc)
+    .bind(logged_at)
+    .bind(is_catch_up)
+    .bind(if is_catch_up { Some(today) } else { None })
+    .execute(&state.pool)
+    .await;
+
+    if let Err(e) = insert {
+        // The one-per-filing-day index is the rule; a lost race must say so rather
+        // than surface as a 500.
+        if matches!(&e, sqlx::Error::Database(db) if db.constraint()
+            == Some("habit_logs_one_catch_up_per_filing_day"))
+        {
+            return Err(ApiError::conflict(
+                "You already filed a catch-up log today. One a day is the rule.",
+            ));
+        }
+        return Err(ApiError::from(e));
+    }
 
     let stats = compute_stats(&state.pool, user.id, kind, state.cfg.wlw_daily_limit).await?;
     Ok((StatusCode::CREATED, Json(LogResponse { stats })))
@@ -565,8 +688,10 @@ async fn owned_recent_log(
     user_id: uuid::Uuid,
     log_id: i64,
 ) -> ApiResult<(uuid::Uuid, OffsetDateTime)> {
+    // `created_at`, not `logged_at`: a catch-up describes yesterday but was written
+    // now, and the window is about the writing.
     let row: Option<(uuid::Uuid, OffsetDateTime)> =
-        sqlx::query_as("select user_id, logged_at from habit_logs where id = $1")
+        sqlx::query_as("select user_id, created_at from habit_logs where id = $1")
             .bind(log_id)
             .fetch_optional(pool)
             .await?;
@@ -775,6 +900,21 @@ async fn compute_stats(
     let today_start = now.date().midnight().assume_utc();
     let week_start = week_start_utc(now);
 
+    // Yesterday, for the catch-up window: how many logs that day holds (any kind,
+    // because a catch-up fills a gap rather than topping up a day), and whether
+    // one was already filed today.
+    let (yesterday_count, catch_up_filed): (i64, i64) = sqlx::query_as(
+        "select
+           (select count(*) from habit_logs
+             where user_id = $1 and log_date = (now() at time zone 'utc')::date - 1),
+           (select count(*) from habit_logs
+             where user_id = $1 and is_catch_up
+               and catch_up_on = (now() at time zone 'utc')::date)",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+
     let (today_count, week_count, alltime_count): (i64, i64, i64) = sqlx::query_as(
         "select
            (select count(*) from habit_logs where user_id = $1 and kind = $4 and log_date = (now() at time zone 'utc')::date),
@@ -805,18 +945,19 @@ async fn compute_stats(
     .fetch_one(pool)
     .await?;
 
-    let recent: Vec<FeedItem> = sqlx::query_as::<_, (i64, uuid::Uuid, String, Option<String>, Option<String>, OffsetDateTime, Option<String>)>(
-        "select l.id, l.user_id, p.username, p.display_name, p.avatar_url, l.logged_at, l.note
-         from habit_logs l join profiles p on p.id = l.user_id
-         where l.user_id = $1 and l.kind = $3 order by l.logged_at desc limit 20",
+    // Newest-WRITTEN first, not newest-dated: a catch-up filed a minute ago
+    // describes yesterday and must still be at the top, or the 15-minute undo
+    // would be attached to a different row than the one just created.
+    let recent: Vec<FeedItem> = sqlx::query_as::<_, (i64, uuid::Uuid, String, Option<String>, Option<String>, OffsetDateTime, Option<String>, bool)>(
+        "select id, user_id, username, display_name, avatar_url, logged_at, note, catch_up
+         from my_recent_logs($1, $2::text, 20)",
     )
     .bind(user_id)
-    .bind(today_start)
     .bind(kind.as_str())
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|(id, uid, uname, dname, av, ts, note)| FeedItem {
+    .map(|(id, uid, uname, dname, av, ts, note, catch_up)| FeedItem {
         id,
         user_id: uid,
         username: uname,
@@ -824,6 +965,7 @@ async fn compute_stats(
         avatar_url: av,
         logged_at: ts.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         note,
+        catch_up,
     })
     .collect();
 
@@ -962,6 +1104,11 @@ async fn compute_stats(
         next_allowed_in_secs: next_in_secs,
         secs_until_reset,
         blocked_by_exclusivity,
+        catch_up: CatchUpState {
+            available: yesterday_count == 0 && catch_up_filed == 0,
+            filed_today: catch_up_filed > 0,
+            yesterday_count,
+        },
         time_to_cum: TimeToCumMine {
             samples: ttc_samples,
             avg_secs: ttc_avg,
@@ -1340,8 +1487,9 @@ pub async fn get_feed(
         String,
         Option<String>,
         OffsetDateTime,
+        bool,
     )> = sqlx::query_as(
-        "select id, user_id, username, display_name, avatar_url, kind, note, logged_at
+        "select id, user_id, username, display_name, avatar_url, kind, note, logged_at, catch_up
              from activity_feed($1, $2::int)",
     )
     .bind(cursor)
@@ -1350,7 +1498,7 @@ pub async fn get_feed(
     .await?;
     let items: Vec<PublicFeedItem> = rows
         .into_iter()
-        .map(|(id, uid, uname, dname, av, kind, note, ts)| PublicFeedItem {
+        .map(|(id, uid, uname, dname, av, kind, note, ts, catch_up)| PublicFeedItem {
             id,
             user_id: uid,
             username: uname,
@@ -1359,6 +1507,7 @@ pub async fn get_feed(
             kind,
             note,
             logged_at: ts.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
+            catch_up,
         })
         .collect();
     let next_cursor = if items.len() as i64 >= limit { items.last().map(|i| i.id) } else { None };

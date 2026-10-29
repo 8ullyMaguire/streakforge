@@ -111,6 +111,10 @@ pub async fn build_router(cfg: &Config, pool: PgPool) -> Result<Router, sqlx::Er
         .route("/flags", post(crate::moderation::flag))
         .route("/moderation/queue", get(crate::moderation::queue))
         .route("/moderation/action", post(crate::moderation::action))
+        // The member's own data: take it away, or have it erased. Both are
+        // authenticated by the session, and the erasure additionally by password.
+        .route("/account/export", get(crate::account::export))
+        .route("/account/erase", post(crate::account::erase))
         .route("/stats", get(crate::api::get_stats))
         .route("/drill", get(crate::api::get_drill))
         .route("/denial", get(crate::api::get_denial))

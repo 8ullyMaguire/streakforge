@@ -73,13 +73,21 @@ export const api = {
 	mintGuest: () => request<SessionUser>('/guest', { method: 'POST' }),
 	register: (payload: AuthPayload) => request<SessionUser>('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
 	login: (payload: AuthPayload) => request<SessionUser>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
-	logHabit: (note?: string, kind: LogKind = 'habit', timeToCumSecs?: number) =>
+	logHabit: (
+		note?: string,
+		kind: LogKind = 'habit',
+		timeToCumSecs?: number,
+		day?: 'today' | 'yesterday'
+	) =>
 		request<{ stats: Stats }>('/logs', {
 			method: 'POST',
 			body: JSON.stringify({
 				note: note ?? '',
 				kind,
-				...(timeToCumSecs === undefined ? {} : { time_to_cum_secs: timeToCumSecs })
+				...(timeToCumSecs === undefined ? {} : { time_to_cum_secs: timeToCumSecs }),
+				// `yesterday` is the catch-up window: one per filing day, and only
+				// into a day that is empty. The server enforces both; this only asks.
+				...(day === undefined || day === 'today' ? {} : { day })
 			})
 		}),
 	/** The one-click flow's second half: add or clear the duration, inside 15 min. */
@@ -109,6 +117,15 @@ export const api = {
 		request<{ flags: number; from_tl2: number; hidden: boolean }>('/flags', {
 			method: 'POST',
 			body: JSON.stringify({ target_kind, target_id, reason })
+		}),
+	/** The member's own data, as a download. A plain link is the honest UI here:
+	 *  the cookie authenticates it and the browser saves the file. */
+	exportUrl: '/api/account/export',
+	/** Irreversible. Password + the typed word, both checked server-side. */
+	eraseAccount: (password: string, confirm: string) =>
+		request<void>('/account/erase', {
+			method: 'POST',
+			body: JSON.stringify({ password, confirm })
 		}),
 	moderationQueue: () => request<ModerationQueueItem[]>('/moderation/queue'),
 	moderationAction: (

@@ -1,4 +1,5 @@
 // Library facade so integration tests can reference the crate's modules.
+pub mod account;
 pub mod api;
 pub mod audit;
 pub mod auth;

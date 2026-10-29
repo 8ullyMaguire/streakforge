@@ -16,6 +16,33 @@
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
+	// The data rights, in the two directions the terms promise: take it, or have it
+	// erased. Erasure is the only irreversible action on the site, so it needs the
+	// password and a typed word, and it says exactly what happens first.
+	let eraseOpen = $state(false);
+	let erasePassword = $state('');
+	let eraseConfirm = $state('');
+	let erasing = $state(false);
+	let eraseError = $state<string | null>(null);
+
+	async function erase() {
+		if (erasing) return;
+		erasing = true;
+		eraseError = null;
+		try {
+			await api.eraseAccount(erasePassword, eraseConfirm);
+			// The account is gone and the session with it: leave the member on a page
+			// that can render without one.
+			window.location.href = '/?erased=1';
+		} catch (e) {
+			eraseError =
+				e instanceof ApiRequestError || e instanceof Error
+					? e.message
+					: 'Could not erase the account.';
+			erasing = false;
+		}
+	}
+
 	onMount(async () => {
 		try {
 			me = await api.me();
@@ -118,6 +145,62 @@
 			<button class="btn btn-red btn-block" onclick={save} disabled={saving}>
 				{saving ? 'SAVING…' : 'SAVE'}
 			</button>
+		</div>
+
+		<div class="card" style="margin-top:20px;padding:18px;">
+			<div style="font-size:12px;letter-spacing:0.12em;color:var(--text-dim);margin-bottom:10px;">YOUR DATA</div>
+
+			<div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:center;">
+				<div style="font-size:13px;color:var(--text-dim);max-width:360px;line-height:1.55;">
+					Everything the site holds about you — account, logs, locks, cage checks, attestations,
+					flags, audit events — as one JSON file.
+				</div>
+				<a class="btn btn-ghost" href={api.exportUrl} download>DOWNLOAD MY DATA</a>
+			</div>
+
+			<div style="border-top:1px solid var(--border);margin:16px 0 14px;"></div>
+
+			{#if !eraseOpen}
+				<div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:center;">
+					<div style="font-size:13px;color:var(--text-dim);max-width:360px;line-height:1.55;">
+						Erasing deletes the account and every log, lock, check and vote with it. It cannot
+						be undone and there is no export afterwards.
+					</div>
+					<button class="btn btn-ghost" style="border-color:rgba(200,30,30,0.5);color:var(--red-soft);" onclick={() => (eraseOpen = true)}>
+						ERASE ACCOUNT
+					</button>
+				</div>
+			{:else}
+				<div style="font-size:13px;line-height:1.6;">
+					<p style="color:var(--red-soft);margin:0 0 10px;">
+						This deletes your account and everything in it: logs, locks, cage checks,
+						attestations and flags. Anonymous audit rows saying an erasure happened remain.
+					</p>
+					<div class="form-row">
+						<label for="erase-password">Your password</label>
+						<input id="erase-password" type="password" bind:value={erasePassword} autocomplete="current-password" />
+					</div>
+					<div class="form-row">
+						<label for="erase-confirm">Type DELETE to confirm</label>
+						<input id="erase-confirm" bind:value={eraseConfirm} placeholder="DELETE" autocomplete="off" />
+					</div>
+					{#if eraseError}
+						<div class="form-error">{eraseError}</div>
+					{/if}
+					<div style="display:flex;gap:8px;flex-wrap:wrap;">
+						<button
+							class="btn btn-red"
+							onclick={erase}
+							disabled={erasing || eraseConfirm !== 'DELETE' || !erasePassword}
+						>
+							{erasing ? 'ERASING…' : 'ERASE EVERYTHING'}
+						</button>
+						<button class="btn btn-ghost" onclick={() => { eraseOpen = false; erasePassword = ''; eraseConfirm = ''; eraseError = null; }}>
+							CANCEL
+						</button>
+					</div>
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>

@@ -72,6 +72,11 @@
 						<span style="color:{item.kind === 'denial' ? 'var(--gold)' : 'var(--text-dim)'};font-size:12px;">
 							{item.kind === 'denial' ? ' denied a load' : ' wasted a load'}
 						</span>
+						{#if item.catch_up}
+							<span style="font-size:11px;color:var(--gold);letter-spacing:0.06em;">
+								· FILED LATE
+							</span>
+						{/if}
 						{#if item.note}
 							<div style="font-size:13px;color:var(--text);margin-top:4px;line-height:1.5;font-style:italic;">
 								“{item.note}”

@@ -656,6 +656,10 @@ The dev box builds and the ThinkCentre serves; if either is unavailable nothing 
 
 ## 2026-10-29 (second pass) — what the shipped features imply next
 
+**Shipped since this section was written:** #110 (the yesterday catch-up window), #111
+(export my history) and the erasure path beside it, plus #128's first half (the decode contract
+of `activity_feed` is pinned) — see `STATUS.md` 2026-10-29 (third pass) and `/privacy`.
+
 Scored the same way as everything else: **impact ÷ effort**, so 1.0 is the best possible ratio and
 0.33 is a real idea that should wait. This batch is deliberately downstream of what landed today —
 cage checks, trust levels, time to cum, public-by-default confessions — because the gaps that matter

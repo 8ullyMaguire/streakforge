@@ -150,7 +150,7 @@ pub fn client_ip(headers: &axum::http::HeaderMap) -> String {
 
 /// Failures recorded for this username inside the window, and the seconds until
 /// the oldest of them ages out.
-async fn username_failures(pool: &PgPool, username: &str) -> ApiResult<(i64, Option<i64>)> {
+pub(crate) async fn username_failures(pool: &PgPool, username: &str) -> ApiResult<(i64, Option<i64>)> {
     let row: (i64, Option<f64>) = sqlx::query_as(
         "select count(*)::bigint,
                 ceil(extract(epoch from (
@@ -171,7 +171,7 @@ async fn username_failures(pool: &PgPool, username: &str) -> ApiResult<(i64, Opt
 /// escalation is measured against. Separate from `username_failures` because the
 /// two answer different questions: that one is "is the window full", this one is
 /// "how persistent has this been".
-async fn username_failures_in_day(pool: &PgPool, username: &str) -> ApiResult<i64> {
+pub(crate) async fn username_failures_in_day(pool: &PgPool, username: &str) -> ApiResult<i64> {
     let n: i64 = sqlx::query_scalar(
         "select count(*)::bigint from public.login_attempts
          where lower(username) = lower($1)
@@ -185,7 +185,7 @@ async fn username_failures_in_day(pool: &PgPool, username: &str) -> ApiResult<i6
 }
 
 /// Same, for the address.
-async fn ip_failures(pool: &PgPool, ip: &str) -> ApiResult<i64> {
+pub(crate) async fn ip_failures(pool: &PgPool, ip: &str) -> ApiResult<i64> {
     let n: i64 = sqlx::query_scalar(
         "select count(*)::bigint from public.login_attempts
          where ip = $1 and attempted_at > now() - make_interval(secs => $2::double precision)",
@@ -209,7 +209,7 @@ async fn ip_failures(pool: &PgPool, ip: &str) -> ApiResult<i64> {
 /// history that makes it escalate. Rows are still bounded, because a row only
 /// outlives its window for an account or an address somebody is actively
 /// guessing at.
-async fn record_login_failure(pool: &PgPool, username: &str, ip: &str) -> ApiResult<()> {
+pub(crate) async fn record_login_failure(pool: &PgPool, username: &str, ip: &str) -> ApiResult<()> {
     sqlx::query(
         "with pruned as (
            delete from public.login_attempts

@@ -69,6 +69,8 @@ export interface PublicFeedItem {
 	kind: 'habit' | 'denial';
 	note: string | null;
 	logged_at: string;
+	/** Filed late for the day it describes (a catch-up). */
+	catch_up: boolean;
 }
 
 export interface FeedItem {
@@ -79,6 +81,8 @@ export interface FeedItem {
 	avatar_url: string | null;
 	logged_at: string;
 	note: string | null;
+	/** Filed late for the day it describes (the yesterday window). */
+	catch_up: boolean;
 }
 
 export interface DevotionIndex {
@@ -135,6 +139,9 @@ export interface Stats {
 	milestones: MilestoneTier[];
 	/** True when skipping today costs the multiplier already earned. */
 	at_risk: AtRisk;
+	/** Whether yesterday is empty and a catch-up has not been filed today. The
+	 *  server decides; the page prints what it is told. */
+	catch_up: CatchUpState;
 	devotion: DevotionIndex;
 }
 
@@ -151,6 +158,12 @@ export interface MilestoneTier {
 	days: number;
 	multiplier: number;
 	reached: boolean;
+}
+
+export interface CatchUpState {
+	available: boolean;
+	filed_today: boolean;
+	yesterday_count: number;
 }
 
 export interface AtRisk {
