@@ -27,6 +27,10 @@ Standing instruction: finish what is left without asking. Plan:
   content is actually met.
 - The account export carries `share_time_to_cum` too, so a data download describes the setting as
   well as the rows.
+- **Timing, measured:** at migration time production held **zero** rows with a `time_to_cum_secs`
+  (`select count(*) from habit_logs where time_to_cum_secs is not null` → 0; the only reporter had been
+  a probe account). The reversal therefore cost no real member anything — worth stating, because the
+  same change made later would have been a silent unpublication of everyone's numbers.
 
 Verified: 146 backend tests (22 unit · 11 consent · 14 guest · 66 integration · 26 routes · 7
 edge-case), 145 vitest, svelte-check 0/0, vite build clean. Live (`sf-ttc-probe.sh`): anonymous
