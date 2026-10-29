@@ -135,6 +135,30 @@ async fn register(app: &Router, username: &str) -> String {
     session_cookie(&res)
 }
 
+/// Sign an existing account back in. The login form carries the same three anti-bot
+/// fields as registration (`auth_body`), so a hand-written body is a 400 — which is what
+/// the first version of the deck test did.
+async fn login(app: &Router, username: &str) -> String {
+    let cookie = consent(app).await;
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header("content-type", "application/json")
+                .header("cookie", &cookie)
+                .body(Body::from(
+                    auth_body(username, "correct-horse-battery").to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "login must succeed");
+    session_cookie(&res)
+}
+
 async fn get(app: &Router, path: &str, cookie: Option<&str>) -> axum::response::Response {
     let mut req = Request::builder().method("GET").uri(path);
     if let Some(c) = cookie {
@@ -1121,4 +1145,321 @@ async fn erasing_an_account_removes_its_data_and_keeps_only_an_anonymous_record(
         .await
         .unwrap();
     assert_eq!(survivors, 1);
+}
+
+// ---- the affirmation deck --------------------------------------------------
+
+/// A member at trust level 2, built the way the ladder actually builds one: an account
+/// older than the age gate, activity on three distinct days, five contributions. Using
+/// SQL instead of a stored flag is the point — `is_leader` is the only stored bit, so a
+/// test that "made someone a moderator" any other way would be testing a fiction.
+async fn make_level_two(pool: &PgPool, username: &str) {
+    sqlx::query("update profiles set created_at = now() - interval '3 days' where username = $1")
+        .bind(username)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, note, logged_at)
+         select p.id, 'habit', null,
+                (((now() at time zone 'utc')::date - d)::timestamp at time zone 'utc') + interval '12 hours'
+           from profiles p, generate_series(0, 2) d
+          where p.username = $1",
+    )
+    .bind(username)
+    .execute(pool)
+    .await
+    .unwrap();
+    // Two more on the same day: contributions count logs, active days count dates.
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, note, logged_at)
+         select p.id, 'habit', null, now() - interval '10 minutes'
+           from profiles p, generate_series(1, 2) where p.username = $1",
+    )
+    .bind(username)
+    .execute(pool)
+    .await
+    .unwrap();
+    let level: i32 = sqlx::query_scalar(
+        "select level from public.trust_level((select id from profiles where username = $1))",
+    )
+    .bind(username)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(level, 2, "the fixture must actually reach level 2");
+}
+
+async fn post(app: &Router, path: &str, body: serde_json::Value, cookie: Option<&str>) -> axum::response::Response {
+    let mut req = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "application/json");
+    if let Some(c) = cookie {
+        req = req.header("cookie", c);
+    }
+    app.clone()
+        .oneshot(req.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap()
+}
+
+async fn delete(app: &Router, path: &str, cookie: &str) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(path)
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_deck_is_readable_by_anyone_and_the_queue_is_not(pool: PgPool) {
+    let app = app(pool).await;
+    let res = get(&app, "/api/affirmations", None).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert!(
+        body["deck"].as_array().unwrap().len() >= 18,
+        "the curated deck is seeded: {}",
+        body["deck"]
+    );
+    assert!(body["review"].as_array().unwrap().is_empty(), "no session, no queue");
+    assert_eq!(body["can_review"], false);
+    assert_eq!(body["remaining_today"], serde_json::Value::Null);
+    // The seeded lines belong to nobody, and say so.
+    assert_eq!(body["deck"][0]["author"], "curated");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_new_members_line_waits_for_a_level_two_voice(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let alice = register(&app, "deckalice").await;
+
+    let res = post(
+        &app,
+        "/api/affirmations",
+        serde_json::json!({ "body": "I am exactly where I put myself." }),
+        Some(&alice),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = json_of(res).await;
+    assert_eq!(body["status"], "pending", "a level-0 line is a queue item");
+    assert_eq!(body["live"], false);
+    let id = body["id"].as_i64().unwrap();
+
+    // Her own page shows it; the public deck does not.
+    let mine = json_of(get(&app, "/api/affirmations", Some(&alice)).await).await;
+    assert_eq!(mine["mine"].as_array().unwrap().len(), 1);
+    assert_eq!(mine["can_review"], false);
+    assert_eq!(mine["remaining_today"], 2);
+    let public = json_of(get(&app, "/api/affirmations", None).await).await;
+    assert!(
+        !public["deck"].as_array().unwrap().iter().any(|i| i["id"] == id),
+        "a pending line is not in the deck"
+    );
+
+    // A level-0 member cannot admit it.
+    let bob = register(&app, "deckbob").await;
+    let res = post(&app, &format!("/api/affirmations/{id}/approve"), serde_json::json!({}), Some(&bob)).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN, "level 0 cannot admit");
+
+    make_level_two(&pool, "deckbob").await;
+    let res = post(&app, &format!("/api/affirmations/{id}/approve"), serde_json::json!({}), Some(&bob)).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    let public = json_of(get(&app, "/api/affirmations", None).await).await;
+    let admitted = public["deck"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == id)
+        .expect("the approved line is in the deck")
+        .clone();
+    assert_eq!(admitted["author"], "deckalice", "attributed to its author, not the approver");
+    assert_eq!(admitted["status"], "live");
+
+    // And it cannot be admitted twice: the second approval finds nothing pending.
+    let res = post(&app, &format!("/api/affirmations/{id}/approve"), serde_json::json!({}), Some(&bob)).await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_submission_is_one_line_and_a_paired_rate_limit(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let alice = register(&app, "deckcarol").await;
+
+    let too_short = post(&app, "/api/affirmations", serde_json::json!({ "body": "   ab  " }), Some(&alice)).await;
+    assert_eq!(too_short.status(), StatusCode::BAD_REQUEST, "three characters after tidying");
+
+    let long = "x".repeat(201);
+    let too_long = post(&app, "/api/affirmations", serde_json::json!({ "body": long }), Some(&alice)).await;
+    assert_eq!(too_long.status(), StatusCode::BAD_REQUEST);
+
+    // Pasted line breaks become one line, because the drill types it back.
+    let res = post(
+        &app,
+        "/api/affirmations",
+        serde_json::json!({ "body": "  I am calm.\n\n  I am  steady.  " }),
+        Some(&alice),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert_eq!(json_of(res).await["body"], "I am calm. I am steady.");
+
+    // One an hour.
+    let second = post(&app, "/api/affirmations", serde_json::json!({ "body": "Second line." }), Some(&alice)).await;
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(second.headers().get("retry-after").is_some(), "the 429 names the wait");
+
+    // Age the two out of the hour window and spend the daily budget.
+    sqlx::query("update affirmations set created_at = now() - interval '2 hours' where author_id = (select id from profiles where username = 'deckcarol')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let second = post(&app, "/api/affirmations", serde_json::json!({ "body": "Second line." }), Some(&alice)).await;
+    assert_eq!(second.status(), StatusCode::CREATED, "an hour later is fine");
+    sqlx::query("update affirmations set created_at = now() - interval '2 hours' where author_id = (select id from profiles where username = 'deckcarol')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let third = post(&app, "/api/affirmations", serde_json::json!({ "body": "Third line." }), Some(&alice)).await;
+    assert_eq!(third.status(), StatusCode::CREATED);
+    sqlx::query("update affirmations set created_at = now() - interval '2 hours' where author_id = (select id from profiles where username = 'deckcarol')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let fourth = post(&app, "/api/affirmations", serde_json::json!({ "body": "Fourth line." }), Some(&alice)).await;
+    assert_eq!(fourth.status(), StatusCode::TOO_MANY_REQUESTS, "three a day");
+    assert!(json_of(fourth).await["error"].as_str().unwrap().contains("3 a day"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_deck_keeps_one_copy_of_a_line(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    register(&app, "deckdave").await;
+    make_level_two(&pool, "deckdave").await;
+
+    // A level-2 author goes straight into the deck...
+    let cookie = login(&app, "deckdave").await;
+
+    let seeded: String =
+        sqlx::query_scalar("select body from affirmations where author_id is null limit 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let res = post(&app, "/api/affirmations", serde_json::json!({ "body": seeded }), Some(&cookie)).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT, "the curated line is already live");
+    assert_eq!(json_of(res).await["status"], serde_json::Value::Null);
+
+    // ...and the same words with different whitespace are still the same words.
+    let spaced = format!("  {}  ", seeded.to_uppercase());
+    let res = post(&app, "/api/affirmations", serde_json::json!({ "body": spaced }), Some(&cookie)).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT, "case and padding do not make a new line");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn you_may_hide_and_delete_your_own_line_and_nobody_elses(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let alice = register(&app, "deckerin").await;
+    let bob = register(&app, "deckfrank").await;
+
+    let id = json_of(
+        post(&app, "/api/affirmations", serde_json::json!({ "body": "Mine to keep." }), Some(&alice)).await,
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+
+    // A stranger at the same level cannot touch it.
+    let res = post(&app, &format!("/api/affirmations/{id}/hide"), serde_json::json!({}), Some(&bob)).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let res = delete(&app, &format!("/api/affirmations/{id}"), &bob).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // The author can hide it — and it stays in her own list, marked.
+    let res = post(&app, &format!("/api/affirmations/{id}/hide"), serde_json::json!({}), Some(&alice)).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let mine = json_of(get(&app, "/api/affirmations", Some(&alice)).await).await;
+    assert_eq!(mine["mine"][0]["status"], "hidden", "a hidden line is still hers to see");
+    let again = post(&app, &format!("/api/affirmations/{id}/hide"), serde_json::json!({}), Some(&alice)).await;
+    assert_eq!(again.status(), StatusCode::CONFLICT, "hiding twice is not an error to swallow");
+
+    // ...and delete it for good.
+    let res = delete(&app, &format!("/api/affirmations/{id}"), &alice).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let mine = json_of(get(&app, "/api/affirmations", Some(&alice)).await).await;
+    assert!(mine["mine"].as_array().unwrap().is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_curated_line_belongs_to_the_site(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let alice = register(&app, "deckgina").await;
+    let id: i64 = sqlx::query_scalar("select id from affirmations where author_id is null limit 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let res = post(&app, &format!("/api/affirmations/{id}/hide"), serde_json::json!({}), Some(&alice)).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN, "even a member may not hide curated copy");
+    let res = delete(&app, &format!("/api/affirmations/{id}"), &alice).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    sqlx::query("update profiles set is_leader = true where username = 'deckgina'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = delete(&app, &format!("/api/affirmations/{id}"), &alice).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT, "the leader may prune the curated deck");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn trust_ships_the_ladder_it_enforces(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    let alice = register(&app, "ladderalice").await;
+
+    let body = json_of(get(&app, "/api/trust", Some(&alice)).await).await;
+    assert_eq!(body["level"], 0);
+    assert_eq!(body["band"], "small", "a brand new site is on the soft band");
+    assert_eq!(body["active_accounts"], 1, "floored at one, never zero");
+    let rungs = body["thresholds"].as_array().unwrap();
+    assert_eq!(rungs.len(), 3);
+    assert_eq!(rungs[0]["level"], 1);
+    assert_eq!(rungs[0]["min_contributions"], 1, "one log is enough for level 1");
+    assert_eq!(rungs[1]["min_active_days"], 3, "level 2 is three days, not seven");
+    assert_eq!(rungs[2]["min_contributions"], 15);
+
+    // Ten active members later, the same member is judged against the grown ladder.
+    make_level_two(&pool, "ladderalice").await;
+    sqlx::query(
+        "insert into profiles (username) select 'ladder' || g from generate_series(1, 10) g",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, note, logged_at)
+         select p.id, 'habit', null, now() from profiles p where p.username like 'ladder%' and p.username <> 'ladderalice'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = json_of(get(&app, "/api/trust", Some(&alice)).await).await;
+    assert_eq!(body["band"], "grown");
+    let rungs = body["thresholds"].as_array().unwrap();
+    assert_eq!(rungs[1]["min_active_days"], 7, "the grown ladder is the one from 0016");
+    assert_eq!(rungs[2]["min_contributions"], 40);
+    assert_eq!(
+        body["level"], 1,
+        "three active days is level 2 on the soft band and level 1 on the grown one"
+    );
 }

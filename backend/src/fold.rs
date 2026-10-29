@@ -42,6 +42,13 @@ const FOLDED: &[(&str, &str)] = &[
     // attester_id)` index cannot collide with an account that did not exist a
     // statement ago.
     ("cage_attestations", "attester_id"),
+    // An affirmation is a line the guest wrote for the drill, and the drill is one deck
+    // for everyone: leaving it on the tombstone would delete a stranger's favourite
+    // mantra at the moment its author registered. Nothing is scored here — the deck has
+    // no author ranking — so folding it moves no credit, which is what the firewall
+    // requires. It also cannot collide: `affirmations_one_live_per_line` covers `live`
+    // rows only, and a guest is level 0, so everything a guest wrote is `pending`.
+    ("affirmations", "author_id"),
 ];
 
 /// Columns that reference `profiles(id)` and are deliberately **not** folded.
@@ -63,6 +70,11 @@ const EXEMPT: &[(&str, &str)] = &[
     ("profiles", "merged_into"),
     ("flags", "reporter_id"),
     ("moderation_actions", "actor_id"),
+    // `affirmations.reviewed_by` — who admitted a line to the deck. Same reasoning as
+    // `moderation_actions.actor_id`: it is the record of a decision about someone else's
+    // content, and a guest cannot hold the level that makes it (level 2 needs active
+    // days), so the only rows that ever point here are from an account, not a tombstone.
+    ("affirmations", "reviewed_by"),
 ];
 
 #[derive(Debug)]

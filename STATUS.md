@@ -1,5 +1,45 @@
 # StreakForge — Development Status
 
+## 2026-10-29 (fourth pass) — a deck the members write, and a ladder that fits the site
+
+The owner asked for two things: members should be able to add entries to the affirmation drill, and
+the trust requirements should be loosened "while there are few users". Plan:
+`docs/plans/2026-10-29-affirmation-deck-and-soft-ladder.md`.
+
+- **The deck is a table (0019).** 18 curated lines seeded with `author_id` null, plus member
+  submissions. A submission is `pending` until a level-2 voice admits it — or is `live` at write time
+  if the author already holds level 2. 1 an hour, 3 a day. `affirmations_one_live_per_line`
+  (partial unique on `lower(btrim(body))`) is what makes "the same line twice" a 409 instead of a
+  race, and `affirmations_live_is_reviewed` refuses a member line that is live without a reviewer.
+  The author can hide or delete their own; a curated line only a leader can touch; deletion cascades
+  with the account, so erasure still means erasure. `/affirmations` is the page, the drill reads the
+  deck from the API, and the old constant stays as the offline fallback.
+- **The ladder has two bands (0019/0020).** Rungs come from `trust_thresholds()`, which picks a band
+  by `active_accounts()` and switches at ten. Small band: L1 24h/1 log, L2 48h/3 active days/5
+  contributions, L3 7 days/8 active days/15 contributions. Grown band: the 0016 rungs. It tightens
+  back by itself when the site grows, because the band is computed at read time.
+- **"Active" means this week.** 0019 counted 30 days; measured on production that was 18 accounts
+  while three members had logged that day, so the band never bent and the softening would have
+  shipped inert. 0020 counts 7 days, with a test that a member who logged 20 days ago is in the
+  month and not in the week.
+- **The moderation page stopped lying.** It hardcoded `needs: '7 active days, 10 contributions'` for
+  level 2 while the database granted it at 3. `/api/trust` now ships `band`, `active_accounts` and
+  `thresholds`, and the page prints those (`web/src/lib/trust.ts`, unit-tested) plus a
+  "SMALL SITE — 3 active members" note explaining why the numbers are low.
+- **The fold takes the deck with the account.** `affirmations.author_id` folds like a log;
+  `reviewed_by` stays with the tombstone like every other record of a decision about someone else's
+  content. A guest's line is always `pending`, so the fold cannot collide with the live index.
+
+Verified: 22 unit · 11 consent · 14 guest · 66 integration · 25 routes · 7 edge-case = 145 backend
+tests, 145 vitest, svelte-check 0/0, vite build clean. Live: anonymous deck 18 curated; a level-0
+line `pending` with `remaining_today: 2`; a second submission in the hour 429 with
+`retry-after: 3600`; self-approval at level 0 403 ("Level 2 admits lines to the deck. You are level
+0."); `/api/trust` → `band small, active_accounts 3, rungs [(1,24,0,1),(2,48,3,5),(3,168,8,15)]`. In a
+browser: `/drill` footer "19 lines in the deck · write one", a line typed into `/affirmations` landed
+under "YOUR LINES · WAITING · just now", and `/moderation` printed "a day old, 1 log / 3 active days,
+5 contributions / 8 active days, 15 contributions" with the SMALL SITE note. Both probe accounts were
+deleted afterwards; the deck is back to 18 curated lines and the leader flag went with them.
+
 ## 2026-10-29 (third pass) — the yesterday window, and the data rights the terms promised
 
 Two things: a log may now be filed for yesterday (idea #110), and the member can take their

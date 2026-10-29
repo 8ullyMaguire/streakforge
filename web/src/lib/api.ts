@@ -5,6 +5,7 @@ import type {
 	BoardsResponse,
 	CageCheck,
 	CageResponse,
+	DeckResponse,
 	DenialResponse,
 	DrillResponse,
 	FeedItem,
@@ -20,6 +21,7 @@ import type {
 	Profile,
 	SessionUser,
 	Stats,
+	SubmitAffirmationResponse,
 	TimeToCumResponse,
 	Trust,
 	UserOfTheDay
@@ -128,6 +130,16 @@ export const api = {
 			body: JSON.stringify({ password, confirm })
 		}),
 	moderationQueue: () => request<ModerationQueueItem[]>('/moderation/queue'),
+	deck: () => request<DeckResponse>('/affirmations'),
+	submitAffirmation: (body: string) =>
+		request<SubmitAffirmationResponse>('/affirmations', {
+			method: 'POST',
+			body: JSON.stringify({ body })
+		}),
+	approveAffirmation: (id: number) =>
+		request<void>(`/affirmations/${id}/approve`, { method: 'POST' }),
+	hideAffirmation: (id: number) => request<void>(`/affirmations/${id}/hide`, { method: 'POST' }),
+	deleteAffirmation: (id: number) => request<void>(`/affirmations/${id}`, { method: 'DELETE' }),
 	moderationAction: (
 		target_kind: 'log' | 'cage_check',
 		target_id: number,

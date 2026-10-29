@@ -646,3 +646,58 @@ async fn the_fold_moves_cage_tenure_and_leaves_votes_with_the_tombstone(pool: Pg
         .unwrap();
     assert_eq!(verified, 7_200);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_guests_affirmation_folds_and_keeps_its_place_in_the_queue(pool: PgPool) {
+    // A guest may write for the drill — half the point of a guest session is that you can
+    // try the site before you name yourself. The line is theirs, so it follows them into
+    // the account: dropping it at registration would delete work for no reason, and the
+    // deck has no author ranking to launder (the fold moves tenure, never score).
+    let app = app(pool.clone()).await;
+    let cookie = a_guest(&app).await;
+    let guest_id: uuid::Uuid = sqlx::query_scalar("select id from profiles where is_guest")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let res = call(
+        &app,
+        Method::POST,
+        "/api/affirmations",
+        Some(&cookie),
+        Some(json!({"body": "A line a guest wrote before they had a name."})),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert_eq!(json_of(res).await["status"], "pending", "level 0 is the queue");
+
+    let res = call(
+        &app,
+        Method::POST,
+        "/api/auth/register",
+        Some(&cookie),
+        Some(credentials("deckconverted")),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED, "the fold must not refuse");
+    let account_id = json_of(res).await["id"].as_str().unwrap().to_string();
+
+    let (rows, statuses, reviewed): (i64, Option<String>, i64) = sqlx::query_as(
+        "select count(*), min(a.status), count(a.reviewed_by)
+           from affirmations a where a.author_id = $1::uuid",
+    )
+    .bind(&account_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, 1, "the line came with the account");
+    assert_eq!(statuses.as_deref(), Some("pending"), "and kept its place in the queue");
+    assert_eq!(reviewed, 0, "nobody reviewed it — a guest cannot admit to the deck");
+
+    let left: i64 = sqlx::query_scalar("select count(*) from affirmations where author_id = $1")
+        .bind(guest_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "nothing was left behind on the tombstone");
+}

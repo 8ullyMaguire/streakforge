@@ -22,8 +22,14 @@
 	let logging = $state(false);
 	let index = $state(0);
 	let typed = $state('');
-	let matched = $derived(matchesAffirmation(typed, AFFIRMATIONS[index].text));
-	let similarity = $derived(affirmationSimilarity(typed, AFFIRMATIONS[index].text));
+	// The deck now comes from the server: members add lines and a level-2 voice admits
+	// them (0019). `AFFIRMATIONS` is the offline fallback and the first paint, not the
+	// source of truth — if the fetch fails the drill still works, which is better than a
+	// page that refuses to drill because one GET went missing.
+	let deck = $state<{ text: string; source: string }[]>(AFFIRMATIONS);
+	let current = $derived(deck[index % Math.max(deck.length, 1)]?.text ?? '');
+	let matched = $derived(matchesAffirmation(typed, current));
+	let similarity = $derived(affirmationSimilarity(typed, current));
 
 	// Ticks the rep countdown down from the server's remaining seconds, so it
 	// moves without a reload and the REPEAT button re-enables at midnight UTC.
@@ -45,6 +51,19 @@
 		}, 1000);
 		(async () => {
 			try {
+				// Independent of the stats call: a failed deck fetch must not stop drilling.
+				api
+					.deck()
+					.then((d) => {
+						const live = d.deck.map((i) => ({ text: i.body, source: i.source }));
+						if (live.length > 0) {
+							deck = live;
+							index = index % live.length;
+						}
+					})
+					.catch(() => {
+						/* the built-in deck stays */
+					});
 				const res = await api.drill();
 				stats = res.stats;
 				receivedAt = Date.now();
@@ -61,11 +80,11 @@
 
 	function next() {
 		typed = '';
-		index = (index + 1) % AFFIRMATIONS.length;
+		index = (index + 1) % Math.max(deck.length, 1);
 	}
 	function prev() {
 		typed = '';
-		index = (index - 1 + AFFIRMATIONS.length) % AFFIRMATIONS.length;
+		index = (index - 1 + Math.max(deck.length, 1)) % Math.max(deck.length, 1);
 	}
 
 	async function repeat() {
@@ -158,10 +177,10 @@
 		<div class="card" style="margin:20px 0;text-align:center;position:relative;overflow:hidden;">
 			<div class="crown" style="font-size:28px;">🖤</div>
 			<div style="font-size:20px;font-weight:700;line-height:1.4;min-height:80px;display:flex;align-items:center;justify-content:center;padding:12px 8px;">
-				{AFFIRMATIONS[index].text}
+				{current}
 			</div>
 			<p style="color:var(--text-dim);font-size:12px;letter-spacing:0.12em;text-transform:uppercase;margin:0;">
-				{AFFIRMATIONS[index].source}
+				{deck[index % Math.max(deck.length, 1)]?.source ?? 'the deck'}
 			</p>
 
 			<!-- Typed drill: must type the affirmation before REPEAT enables -->
@@ -207,6 +226,10 @@
 					<ChevronRight size={16} />
 				</button>
 			</div>
+			<p style="text-align:center;font-size:11px;color:var(--text-dim);margin:10px 0 0;">
+				{deck.length} lines in the deck ·
+				<a href="/affirmations" style="color:var(--gold);">write one</a>
+			</p>
 			{#if !stats.can_log && stats.next_allowed_in_secs > 0}
 				<div style="text-align:center;margin-top:10px;">
 					<div

@@ -46,6 +46,16 @@ fn valid_kind(kind: &str) -> bool {
     kind == "log" || kind == "cage_check"
 }
 
+/// One rung as `/api/trust` publishes it. The page prints these numbers directly, so a
+/// requirement can never be hardcoded in the UI and drift from the function that decides.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct TrustRung {
+    pub level: i32,
+    pub min_age_hours: i32,
+    pub min_active_days: i32,
+    pub min_contributions: i32,
+}
+
 #[derive(Debug, Serialize)]
 pub struct TrustResponse {
     pub level: i32,
@@ -56,6 +66,12 @@ pub struct TrustResponse {
     /// level 4 is granted, not earned.
     pub next_level_at: Option<i32>,
     pub is_leader: bool,
+    /// `small` (fewer than 10 active members) or `grown`. The ladder bends on this word,
+    /// and the page says which band it is standing on.
+    pub band: String,
+    pub active_accounts: i32,
+    /// Every rung of the current band, lowest first.
+    pub thresholds: Vec<TrustRung>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +148,19 @@ pub async fn get_trust(
         .bind(user.id)
         .fetch_one(&state.pool)
         .await?;
+    // The rungs come from the same function `trust_level()` reads, so the page cannot
+    // print a requirement the level is not actually judged against.
+    let thresholds: Vec<TrustRung> = sqlx::query_as(
+        "select level, min_age_hours, min_active_days, min_contributions
+           from public.trust_thresholds() order by level",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let (band, active_accounts): (String, i32) = sqlx::query_as(
+        "select t.band, public.active_accounts() as n from public.trust_thresholds() t limit 1",
+    )
+    .fetch_one(&state.pool)
+    .await?;
     Ok(Json(TrustResponse {
         level,
         active_days,
@@ -139,6 +168,9 @@ pub async fn get_trust(
         upheld_flags,
         next_level_at,
         is_leader,
+        band,
+        active_accounts,
+        thresholds,
     }))
 }
 

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, ApiRequestError } from '$lib/api';
 	import { pushToast } from '$lib/toasts.svelte';
+	import { describeRung, bandNote } from '$lib/trust';
 	import type { ModerationQueueItem, Trust } from '$lib/types';
 
 	// ORDER — trust levels and quorum, made visible.
@@ -11,15 +12,40 @@
 	// what is waiting for a verdict. It says what each level unlocks, because a
 	// level nobody can explain is a level nobody trusts.
 
-	const LEVELS: { level: number; name: string; unlocks: string; needs: string }[] = [
-		{ level: 0, name: 'NEW', unlocks: 'read and log', needs: 'any account' },
-		{ level: 1, name: 'MEMBER', unlocks: 'flag content, verify cage checks', needs: 'a day old, 3 logs' },
-		{ level: 2, name: 'TRUSTED', unlocks: 'the queue, restore votes', needs: '7 active days, 10 contributions' },
-		{ level: 3, name: 'REGULAR', unlocks: 'one voice verifies a cage check', needs: '30 active days, 40 contributions' },
-		{ level: 4, name: 'LEADER', unlocks: 'hide and restore alone, audited', needs: 'granted by hand' }
-	];
+	// What each level UNLOCKS is a constant in the backend (FLAG_LEVEL, MODERATOR_LEVEL,
+	// LEADER_LEVEL); what it REQUIRES is not, and must not be written here — since 0019 the
+	// ladder has two bands and the numbers change with the size of the site. The
+	// requirements are printed straight from `/api/trust`, so this page cannot advertise a
+	// threshold the function does not enforce. It did exactly that until this change: with
+	// three members it promised "7 active days" for a level that was already given at 3.
+	const NAMES = ['NEW', 'MEMBER', 'TRUSTED', 'REGULAR', 'LEADER'];
+	const UNLOCKS: Record<number, string> = {
+		0: 'read and log',
+		1: 'flag content, verify cage checks',
+		2: 'the queue, restore votes, admit deck lines',
+		3: 'one voice verifies a cage check',
+		4: 'hide and restore alone, audited'
+	};
+
+	// Every rung, with the requirement printed from the numbers the server sent.
+	let levels = $derived.by(() => {
+		if (!trust) return [];
+		const rows = [{ level: 0 }].map((r) => ({
+			level: r.level,
+			name: NAMES[r.level],
+			unlocks: UNLOCKS[r.level],
+			needs: describeRung({ level: 0, min_age_hours: 0, min_active_days: 0, min_contributions: 0 })
+		}));
+		for (const r of trust.thresholds) {
+			rows.push({ level: r.level, name: NAMES[r.level] ?? `TL${r.level}`, unlocks: UNLOCKS[r.level] ?? '', needs: describeRung(r) });
+		}
+		rows.push({ level: 4, name: NAMES[4], unlocks: UNLOCKS[4], needs: describeRung({ level: 4, min_age_hours: 0, min_active_days: 0, min_contributions: 0 }) });
+		return rows.sort((a, b) => a.level - b.level);
+	});
+
 
 	let trust = $state<Trust | null>(null);
+	const note = $derived(trust ? bandNote(trust.band, trust.active_accounts) : null);
 	let queue = $state<ModerationQueueItem[]>([]);
 	let error = $state<string | null>(null);
 	let busy = $state<number | null>(null);
@@ -82,7 +108,7 @@
 				<div>
 					<div style="font-size:12px;letter-spacing:0.12em;color:var(--text-dim);">YOUR TRUST LEVEL</div>
 					<div style="font-size:26px;color:var(--gold);">
-						TL{trust.level} · {LEVELS[trust.level]?.name ?? '—'}
+						TL{trust.level} · {NAMES[trust.level] ?? '—'}
 					</div>
 				</div>
 				<div style="font-size:12px;color:var(--text-dim);text-align:right;">
@@ -101,7 +127,7 @@
 			</div>
 
 			<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
-				{#each LEVELS as l (l.level)}
+				{#each levels as l (l.level)}
 					<div
 						style="display:flex;gap:10px;font-size:12px;padding:4px 0;color:{l.level === trust.level ? 'var(--text)' : 'var(--text-dim)'};"
 					>
@@ -111,6 +137,11 @@
 						<span style="color:var(--text-dim);">{l.needs}</span>
 					</div>
 				{/each}
+				{#if note}
+					<div style="font-size:11px;color:var(--gold);margin-top:8px;line-height:1.5;">
+						{note}
+					</div>
+				{/if}
 			</div>
 		</div>
 

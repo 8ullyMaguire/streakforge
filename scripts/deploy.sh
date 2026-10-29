@@ -200,7 +200,8 @@ for path in "/" "/api/health" "/api/total" "/api/today" "/api/leaderboard/monthl
             "/api/user-of-the-day" "/api/feed" "/api/doctrine" "/api/kpi" \
             "/api/metrics/time-to-cum" "/api/metrics/boards" \
             "/robots.txt" "/sitemap.xml" "/og.png" "/glossary" "/terms" "/log" \
-            "/cage" "/metrics" "/moderation"; do
+            "/api/affirmations" \
+            "/cage" "/metrics" "/moderation" "/affirmations"; do
   code=000
   for _ in 1 2 3; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "https://streakforge.polarisocial.xyz$path" || true)

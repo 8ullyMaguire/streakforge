@@ -2140,7 +2140,7 @@ async fn verified_cage_days_form_a_streak(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn trust_level_1_is_earned_by_a_day_and_three_logs(pool: PgPool) {
+async fn trust_level_1_is_earned_by_a_day_and_a_log(pool: PgPool) {
     let uid = profile(&pool, "trust_one").await;
     // Fresh account, three logs today: not yet — the account has to be a day old.
     for _ in 0..3 {
@@ -2166,7 +2166,16 @@ async fn trust_level_1_is_earned_by_a_day_and_three_logs(pool: PgPool) {
             .unwrap();
     assert_eq!(level, 1);
     assert_eq!(contributions, 3);
-    assert_eq!(next_at, Some(7), "7 contributions short of level 2");
+    // The distance to level 2 is read from the ladder, not from a number copied into the
+    // test: since 0019 the requirement depends on the site's size (5 contributions on the
+    // small band, 10 on the grown one), and this assertion used to hardcode the grown
+    // number on a database that was judging by the small one.
+    let (l2_contributions,): (i32,) =
+        sqlx::query_as("select min_contributions from public.trust_thresholds() where level = 2")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(next_at, Some(l2_contributions - contributions));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2549,4 +2558,155 @@ async fn the_purge_takes_only_what_is_past_its_window(pool: PgPool) {
         ],
         "the consent record and the erasure record outlive the window; the rest do not"
     );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_ladder_softens_while_the_site_is_small(pool: PgPool) {
+    // The owner's ask: "soften trust level requirements while there are few users". The
+    // softening is not a constant nudged once — it is a band chosen by how many people
+    // actually show up, and it tightens back on its own at ten. Same member, same
+    // activity, two verdicts.
+    let id: uuid::Uuid =
+        sqlx::query_scalar("insert into profiles (username, created_at) values ('ladder', now() - interval '3 days') returning id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, note, logged_at)
+         select $1, 'habit', null,
+                (((now() at time zone 'utc')::date - d)::timestamp at time zone 'utc') + interval '12 hours'
+           from generate_series(0, 2) d",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, note, logged_at)
+         select $1, 'habit', null, now() - interval '5 minutes' from generate_series(1, 2)",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let band: String = sqlx::query_scalar("select band from public.trust_thresholds() limit 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(band, "small", "one active member is a small site");
+    let (level, active_days, contributions): (i32, i32, i32) =
+        sqlx::query_as("select level, active_days, contributions from public.trust_level($1)")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((level, active_days, contributions), (2, 3, 5), "three days and five logs is level 2 here");
+
+    // Ten more active members: the grown ladder takes over without anyone deploying.
+    sqlx::query("insert into profiles (username) select 'grown' || g from generate_series(1, 10) g")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, note, logged_at)
+         select p.id, 'habit', null, now() from profiles p where p.username like 'grown%'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let band: String = sqlx::query_scalar("select band from public.trust_thresholds() limit 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(band, "grown");
+    let level: i32 = sqlx::query_scalar("select level from public.trust_level($1)")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(level, 1, "the same member, judged by the grown ladder, is level 1");
+
+    // And it is a band, not a ratchet: when the site empties again, the softer rung returns.
+    sqlx::query("delete from habit_logs where user_id in (select id from profiles where username like 'grown%')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let level: i32 = sqlx::query_scalar("select level from public.trust_level($1)")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(level, 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_seeded_deck_is_unique_and_readable(pool: PgPool) {
+    // The deck was a TypeScript array; it is now data, so the data has to be worth having:
+    // every curated line is live, attributed to nobody, and no line appears twice (the
+    // shipped array carried "I'm racist and I submit!" under two source tags, and a deck
+    // that reads the same line out loud twice is a bug).
+    let (live, authors, distinct_bodies): (i64, i64, i64) = sqlx::query_as(
+        "select count(*), count(author_id), count(distinct lower(btrim(body)))
+           from public.affirmations where status = 'live'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(live, 18, "the curated deck");
+    assert_eq!(authors, 0, "seeded lines belong to nobody");
+    assert_eq!(live, distinct_bodies, "no line is in the deck twice");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn active_means_this_week_not_this_month(pool: PgPool) {
+    // 0020: the band's denominator is people who are here, not people who once tried. On
+    // production the 30-day count was 18 while three members had logged that day, and a
+    // band that never falls below ten never bends — the softening would have shipped and
+    // done nothing.
+    let active = |u: &str| {
+        let u = u.to_string();
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                "insert into profiles (username) values ($1) returning id",
+            )
+            .bind(u)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    let here = active("here_today").await;
+    sqlx::query("insert into habit_logs (user_id, kind, note, logged_at) values ($1, 'habit', null, now())")
+        .bind(here)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let visited = active("visited_last_month").await;
+    sqlx::query(
+        "insert into habit_logs (user_id, kind, note, logged_at)
+         values ($1, 'habit', null, now() - interval '20 days')",
+    )
+    .bind(visited)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (members_in_month,): (i64,) = sqlx::query_as(
+        "select count(distinct user_id) from habit_logs where logged_at > now() - interval '30 days'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(members_in_month, 2, "both logged inside the month");
+
+    let n: i32 = sqlx::query_scalar("select public.active_accounts()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "only the one who is here this week");
 }

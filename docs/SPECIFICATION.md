@@ -352,6 +352,31 @@ Indexes:
 - `habit_logs_one_catch_up_per_filing_day` UNIQUE (user_id, catch_up_on) WHERE is_catch_up (0018)
 - `habit_logs_user_id_created_at_idx` (user_id, created_at desc)
 
+### 6.3 `affirmations` — the drill deck (0019)
+
+The deck was a TypeScript array until 2026-10-29; it is a table now, because the only person who could
+add a line was the person who could deploy.
+
+| column | type | notes |
+|---|---|---|
+| id | bigserial | |
+| author_id | uuid | null for the 18 curated lines; `ON DELETE CASCADE`, so an affirmation leaves with the account that wrote it |
+| body | text | 3–200 characters after tidying |
+| source | text | `member` for submissions, the guide's name for curated lines |
+| status | text | `pending` → `live`, or `hidden` |
+| created_at | timestamptz | the rate limits read this |
+| reviewed_at / reviewed_by | timestamptz / uuid | who admitted it, and when; `reviewed_by` is `ON DELETE SET NULL` |
+| hidden_at | timestamptz | |
+
+Constraints that are rules rather than documentation:
+
+- `affirmations_live_is_reviewed` — a member's line cannot be `live` without a `reviewed_at`, so nothing
+  reaches the deck by an UPDATE that skipped the decision.
+- `affirmations_one_live_per_line` UNIQUE `(lower(btrim(body))) WHERE status = 'live'` — the deck cannot
+  read the same line out loud twice, and an admission that would duplicate is a 409 rather than a race.
+
+Rate limits: 1 submission an hour, 3 a day, per member.
+
 ### 6.3 Sessions (tower-sessions)
 
 Created by `tower-sessions-sqlx-store`'s `migrate()` at startup: schema `tower_sessions`,
@@ -710,7 +735,22 @@ past a year that are neither a consent record nor an erasure. `/privacy` states 
 windows; `tests/integration.rs::the_purge_takes_only_what_is_past_its_window` proves the
 job takes exactly them.
 
-### 8.6 Manifesto
+### 8.6 The deck (affirmations)
+
+| Method | Path | Auth | Request | Response |
+|--------|------|------|---------|----------|
+| GET | `/affirmations` | optional | — | 200 `DeckResponse` (`deck`, `mine`, `review`, `can_review`, `level`, `remaining_today`, `max_len`) |
+| POST | `/affirmations` | ✓ | `{"body": "..."}` | 201 `{id, body, status, live, remaining_today}`; 400 length, 409 duplicate live line, 429 (1/hour, 3/day) |
+| POST | `/affirmations/{id}/approve` | ✓ TL2+ | — | 204; 403 below TL2, 404 not pending, 409 duplicate |
+| POST | `/affirmations/{id}/hide` | ✓ author or TL2+ | — | 204; 403 a stranger, 409 already hidden |
+| DELETE | `/affirmations/{id}` | ✓ author or TL4 | — | 204; 403 for anyone else |
+
+A level-2 author's submission is admitted at the moment of writing (`live`, `reviewed_by` = herself);
+below that it is `pending` and appears in the `review` list of every level-2 member. The `deck` list is
+public — the drill reads these lines to anyone who opens it — while `mine` and `review` require a
+session, and `review` requires level 2.
+
+### 8.7 Manifesto
 
 | Method | Path | Auth | Response |
 |--------|------|------|----------|
@@ -1074,6 +1114,30 @@ it unambiguously inside that date), flagged `is_catch_up`, and surfaces as `FILE
 the feed and in the member's own history. `StatsResponse.catch_up` reports
 `{available, filed_today, yesterday_count}` so the page offers the window only when the
 server would accept it.
+
+---
+
+### 14.7 The trust ladder has two bands (0019/0020)
+
+A fixed ladder written for a site of dozens makes its first two rungs unreachable on a site of three:
+the moderation queue stays empty, cage checks go unverified, and members conclude the site is dead.
+So the rungs are chosen by `active_accounts()` — distinct non-guest members with a log in the last
+**7 days**, floored at 1 — and the ladder has two bands, switched at **10**:
+
+| band | L1 | L2 | L3 |
+|---|---|---|---|
+| small (< 10 active) | 24h, 1 log | 48h, 3 active days, 5 contributions | 7 days, 8 active days, 15 contributions |
+| grown (≥ 10 active) | 24h, 3 logs | 7 days, 7 active days, 10 contributions | 30 days, 30 active days, 40 contributions |
+
+Two properties are deliberate. **It tightens by itself**: a site that grows past ten active members
+moves to the strict rungs with no deploy, because the band is computed at read time. **It is one
+number per site, not per member**: `trust_thresholds()` returns one band, so a member's level cannot be
+computed from two different ladders inside one statement. `/api/trust` ships the rungs in force
+(`band`, `active_accounts`, `thresholds`) and the moderation page prints them directly — the page used
+to hardcode "7 active days" for a level the database granted at 3.
+
+The week, not the month: measured over 30 days the count on production was 18 while three members had
+logged that day, and a band that never falls below ten never bends.
 
 ---
 

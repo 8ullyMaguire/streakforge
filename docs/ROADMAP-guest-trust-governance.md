@@ -1,6 +1,7 @@
 # Guest access, trust levels and self-governance — streakforge
 
-Status: **GS-1, GS-2 and GS-3 shipped (2026-10-27/28)**; GS-4 is the next item and GS-5 stays deferred.
+Status: **GS-1 … GS-4 shipped (2026-10-27/28/29)**; GS-5 stays deferred (nothing to govern until the deck
+and the feed need it — and the deck now has an admission rule of its own, below).
 The estate-wide standard (items GS-1…GS-5, every setting configurable, defaults and firewalls) is:
 
     secondbrain/10-Projects/2026-10-16-guest-access-trust-and-self-governance.md
@@ -160,3 +161,31 @@ So GS-4 lands **with the first privilege it gates**, not before it — most like
 something to govern. The elastic rule is the part that must not be faked: it needs a test that fails
 for the wrong reason (an empty pool, a pool of one, and a pool that later grows past the nominal bar)
 before it can be called implemented.
+
+## GS-4, as built (2026-10-29) — and the elastic rule, now that there are privileges to gate
+
+GS-4 landed with the privileges it was waiting for: flagging, cage attestation, the moderation queue,
+restore votes, and (0019) admission to the affirmation deck. What was built, and what the deferred
+note above asked to be proved:
+
+- **`trust_level()` is a function, not a column** (0016): level, active days, contributions, upheld
+  flags and the distance to the next rung, computed from logs and attestations. The only stored
+  privilege stays `profiles.is_leader` (level 4), and every use of it writes a `moderation_actions` row.
+- **The elastic rule, as a band** (0019/0020). The standard's shape was "the requirement falls to the
+  top of the actual ladder when nobody clears the nominal bar"; the shape here is a site-wide band
+  chosen by `active_accounts()` — distinct non-guest members with a log in the last **7 days**, floored
+  at 1 — switching at ten members between a soft ladder (L2 at 48h/3 active days/5 contributions) and
+  the nominal one (L2 at 7 days/7/10). It returns to nominal on its own and has no ratchet, because
+  the band is computed at read time from activity, not stored anywhere.
+- **The three tests the note demanded**, as the pool-grows test and its neighbours:
+  `the_ladder_softens_while_the_site_is_small` (one member → soft; ten more active → nominal; pool
+  empties → soft again), `active_means_this_week_not_this_month` (a member who logged 20 days ago is
+  in the month's count and not in the week's), and `trust_level_1_is_earned_by_a_day_and_a_log`
+  (the floor still costs a day, so a burst of logs cannot buy attestation rights).
+- **The fold does not grant trust** (still true, deliberately): a guest's tenure moves with their logs
+  and attestations, so the level is the same on the other side of registration, but nothing is
+  awarded for registering.
+- **The UI reads the function's numbers** (`/api/trust` ships `band`, `active_accounts`,
+  `thresholds`): the moderation page printed "7 active days" for a level the database granted at 3
+  until this pass, which is the "a field with no reader" failure wearing a different hat — a number
+  with no reader is one thing, a number whose reader has its own copy is worse.

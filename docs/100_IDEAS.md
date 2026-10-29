@@ -656,7 +656,9 @@ The dev box builds and the ThinkCentre serves; if either is unavailable nothing 
 
 ## 2026-10-29 (second pass) — what the shipped features imply next
 
-**Shipped since this section was written:** #110 (the yesterday catch-up window), #111
+**Shipped since this section was written:** the deck is member-written and level-2 moderated, and the
+trust ladder now bends with the size of the site (see `STATUS.md` 2026-10-29 fourth pass);
+ #110 (the yesterday catch-up window), #111
 (export my history) and the erasure path beside it, plus #128's first half (the decode contract
 of `activity_feed` is pinned) — see `STATUS.md` 2026-10-29 (third pass) and `/privacy`.
 

@@ -49,6 +49,12 @@ Trust is **computed**, never stored (except the leader flag), from what an accou
 | 3 | ≥ 30 distinct active days, ≥ 40 contributions, 0 upheld flags in 90d | a single attestation verifies a cage check |
 | 4 | `profiles.is_leader` (manual, DB-granted) | unilateral hide and restore, all audited |
 
+> **Superseded on the numbers, not on the shape (0019/0020).** The rungs above are the *grown* band.
+> While fewer than ten members are active in a given week the ladder is softened to
+> L1 1 day/1 log, L2 2 days/3 active days/5 contributions, L3 7 days/8 active days/15 contributions,
+> and it tightens back by itself. `/api/trust` publishes the rungs in force, and the moderation page
+> prints those rather than any copy of this table.
+
 Quorum rules:
 
 - **Auto-hide**: 3 distinct flags on one target, at least one from TL ≥ 2 → target hidden, audited as

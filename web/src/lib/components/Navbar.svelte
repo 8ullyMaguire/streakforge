@@ -70,7 +70,9 @@
 		// The cage check and the metrics are the two surfaces the owner asked for on
 		// 2026-10-29; a feature nobody can find is a feature that does not exist.
 		{ href: '/cage', label: 'CAGE' },
+		// The drill's lines are written by members now, so the deck has its own door.
 		{ href: '/drill', label: 'DRILL' },
+		{ href: '/affirmations', label: 'DECK' },
 		{ href: '/leaderboard', label: 'BOARD' },
 		{ href: '/metrics', label: 'NUMBERS' },
 		{ href: '/feed', label: 'FEED' },

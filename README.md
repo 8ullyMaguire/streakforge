@@ -75,6 +75,14 @@ Plus `STATUS.md` for the living dev-status checklist.
   computed from activity (never stored, except the leader flag); three flags with at
   least one trusted voice hide content, two restore votes bring it back, leaders can
   act alone, and every action is written to `moderation_actions`.
+- **The deck is written by members** — the drill's lines are a table, not a constant: anyone
+  can submit one (1 an hour, 3 a day), a level-2 voice admits it to the shared deck, a level-2
+  author is admitted on the spot, and the author can hide or delete their own. Duplicates are
+  refused by a unique index, so the deck cannot read the same line twice.
+- **A ladder that bends with the site** — trust levels are computed against two bands; while
+  fewer than ten members are active in a week, the rungs are softer (2 days to level 2 instead
+  of 7), and the strict ones come back by themselves when the site grows. `/api/trust` ships the
+  rungs in force and the moderation page prints those, never a copy.
 - **A yesterday window** — a log may be filed for the previous UTC day once per filing
   day, and only into a day that holds nothing: the streak gets repaired, not padded. The
   row is labelled "filed late" on the feed, and it answers to *yesterday's* budget.
@@ -254,6 +262,10 @@ The SPA is served by the Rust backend at `/` (adapter-static build).
 | POST   | `/api/flags`              | ✓    | Flag a log/cage check (TL ≥ 1) |
 | GET    | `/api/moderation/queue`   | ✓    | Flagged targets (TL ≥ 2) |
 | POST   | `/api/moderation/action`  | ✓    | Hide (TL 4) / restore (2 votes or TL 4) |
+| GET    | `/api/affirmations`       | —    | The deck, plus your own lines and (level 2+) the review queue |
+| POST   | `/api/affirmations`       | ✓    | Submit a line: live at level 2, else pending |
+| POST   | `/api/affirmations/{id}/approve` \| `.../hide` | ✓ | Admit (level 2+), hide (author or level 2+) |
+| DELETE | `/api/affirmations/{id}`  | ✓    | Withdraw your own line |
 | GET    | `/api/account/export`     | ✓    | Every row the site holds about you, as a JSON download |
 | POST   | `/api/account/erase`      | ✓    | Password + typed DELETE; irreversible |
 

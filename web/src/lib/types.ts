@@ -242,6 +242,16 @@ export interface BoardsResponse {
 	}[];
 }
 
+/** One rung of the ladder as the server publishes it. The numbers are never hardcoded
+ * here: `/api/trust` sends the thresholds the level was actually judged against, so the
+ * moderation page cannot print a requirement the function does not enforce. */
+export interface TrustRung {
+	level: number;
+	min_age_hours: number;
+	min_active_days: number;
+	min_contributions: number;
+}
+
 export interface Trust {
 	level: number;
 	active_days: number;
@@ -249,6 +259,39 @@ export interface Trust {
 	upheld_flags: number;
 	next_level_at: number | null;
 	is_leader: boolean;
+	/** `small` below ten active members, `grown` at or above it. */
+	band: 'small' | 'grown' | 'unknown';
+	active_accounts: number;
+	thresholds: TrustRung[];
+}
+
+export interface DeckItem {
+	id: number;
+	body: string;
+	source: string;
+	author: string;
+	mine: boolean;
+	status: 'live' | 'pending' | 'hidden';
+	created_at: string;
+}
+
+export interface DeckResponse {
+	deck: DeckItem[];
+	mine: DeckItem[];
+	review: DeckItem[];
+	can_review: boolean;
+	level: number;
+	review_level: number;
+	remaining_today: number | null;
+	max_len: number;
+}
+
+export interface SubmitAffirmationResponse {
+	id: number;
+	body: string;
+	status: 'live' | 'pending';
+	live: boolean;
+	remaining_today: number;
 }
 
 export interface ModerationQueueItem {
