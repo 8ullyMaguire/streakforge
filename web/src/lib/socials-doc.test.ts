@@ -29,7 +29,7 @@ const SITES = [
 	'blackrep.polarisocial.xyz',
 	'gravity.polarisocial.xyz',
 	'concord.polarisocial.xyz',
-	'lorehaven.polarisocial.xyz',
+	'darkhold.polarisocial.xyz',
 	'ficnexus.polarisocial.xyz',
 	'kindred.polarisocial.xyz',
 	'stashdb.polarisocial.xyz',

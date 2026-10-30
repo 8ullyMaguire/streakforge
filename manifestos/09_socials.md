@@ -11,7 +11,7 @@ Everything on this list is mine. One line each, and the honest state of it: not 
   its own address now: the DNS record it had been missing is published.
 - **Concord** — https://concord.polarisocial.xyz — the consensus forge. Every other site here
   takes work through it; see below.
-- **Lorehaven** — https://lorehaven.polarisocial.xyz — a welcoming home for fanfiction: read,
+- **Darkhold** — https://darkhold.polarisocial.xyz — a welcoming home for fanfiction: read,
   write, import your library, keep it offline.
 - **FicNexus** — https://ficnexus.polarisocial.xyz — fanfiction as EPUB, HTML, MOBI and PDF,
   with recommendations for what to read next.
@@ -48,7 +48,7 @@ https://concord.polarisocial.xyz/projects/streakforge
   proposals go head to head and the votes decide which one gets built. Your weight there comes
   from your record in the forge, not from who you are.
 
-You do not need an account here to read any of it, and you do not need to be a member to file something. Several of the sites above keep their own project in the same forge — WhiteBois, FicNexus, Lorehaven and GRAVITY among them — so the same door works wherever you are standing when you hit something you want fixed.
+You do not need an account here to read any of it, and you do not need to be a member to file something. Several of the sites above keep their own project in the same forge — WhiteBois, FicNexus, Darkhold and GRAVITY among them — so the same door works wherever you are standing when you hit something you want fixed.
 
 ## My links
 
