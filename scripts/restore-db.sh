@@ -55,6 +55,14 @@ if [ "$TARGET" = "$LIVE_DB" ]; then
   exit 1
 fi
 
+# A rehearsal that leaves its scratch database behind becomes a disk-space incident. Drop it on every exit
+# path — success, restore failure, freshness failure, signal — but only after the TARGET != LIVE_DB guard above.
+cleanup_scratch() {
+  PGDATABASE=postgres psql -v ON_ERROR_STOP=1 -q -c "drop database if exists \"$TARGET\"" >/dev/null 2>&1 || true
+  echo "==> scratch database '$TARGET' removed by cleanup trap"
+}
+trap cleanup_scratch EXIT
+
 DUMP="${1:-}"
 if [ -z "$DUMP" ]; then
   DUMP="$(ls -1t "$BACKUP_DIR"/streakforge-*.dump 2>/dev/null | head -1 || true)"
@@ -90,8 +98,11 @@ psql -v ON_ERROR_STOP=1 -q -c "create database \"$TARGET\""
 # --no-owner/--no-privileges for the same reason the dump used them: the
 # rehearsal must not need the original role to exist, and must not change who
 # owns anything.
-echo "==> restoring"
-pg_restore --no-owner --no-privileges --exit-on-error -d "$TARGET" "$DUMP" 2>&1 | sed -e 's/^/    /' || {
+SERVER_MAJOR="$(psql -At -c 'show server_version' | cut -d. -f1)"
+PG_RESTORE_BIN="${PG_RESTORE_BIN:-/usr/lib/postgresql/$SERVER_MAJOR/bin/pg_restore}"
+[ -x "$PG_RESTORE_BIN" ] || PG_RESTORE_BIN="$(command -v pg_restore)"
+echo "==> restoring with $PG_RESTORE_BIN (server major $SERVER_MAJOR)"
+"$PG_RESTORE_BIN" --no-owner --no-privileges --exit-on-error -d "$TARGET" "$DUMP" 2>&1 | sed -e 's/^/    /' || {
   echo "FATAL: pg_restore failed — this dump is NOT restorable." >&2
   exit 1
 }
@@ -129,4 +140,4 @@ fi
 # One line a cron log can be read for at a glance, and the only line that says
 # the whole rehearsal succeeded.
 echo "REHEARSAL OK: $(basename "$DUMP") (${DUMP_AGE_HOURS}h old) -> $TARGET | profiles $RESTORED_COUNTS | migrations $RESTORED_MIGRATIONS"
-echo "==> restore rehearsal complete. Scratch database '$TARGET' left in place."
+echo "==> restore rehearsal complete. Scratch database is removed by the cleanup trap."

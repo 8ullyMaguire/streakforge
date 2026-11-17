@@ -94,7 +94,13 @@ OUT="$BACKUP_DIR/streakforge-$STAMP.dump"
 TMP="$OUT.part"
 
 echo "==> dumping $PGDATABASE on $PGHOST to $OUT"
-pg_dump --format=custom --no-owner --no-privileges --file="$TMP"
+# The PATH binary can be a newer major than the server (measured 2026-11-17: pg_dump 18.7 wrote a dump that
+# pg_restore 16.15 could not read — `transaction_timeout`). Prefer the client matching the server's major version.
+SERVER_MAJOR="$(psql -At -c 'show server_version' | cut -d. -f1)"
+PG_DUMP_BIN="${PG_DUMP_BIN:-/usr/lib/postgresql/$SERVER_MAJOR/bin/pg_dump}"
+[ -x "$PG_DUMP_BIN" ] || PG_DUMP_BIN="$(command -v pg_dump)"
+echo "    pg_dump: $PG_DUMP_BIN (server major $SERVER_MAJOR)"
+"$PG_DUMP_BIN" --format=custom --no-owner --no-privileges --file="$TMP"
 chmod 600 "$TMP"
 
 SIZE="$(stat -c%s "$TMP")"

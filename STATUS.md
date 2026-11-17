@@ -1,5 +1,22 @@
 # StreakForge — Development Status
 
+## 2026-11-17 — the rehearsal stopped leaving wreckage, and the backup was unreadable
+
+Owner's estate roadmap row 472. Plan: `docs/plans/2026-11-16-rehearsal-cleanup.md`.
+
+- **Scratch database cleaned.** `scripts/restore-db.sh` now traps EXIT after the `TARGET != LIVE_DB` guard and drops
+  the scratch database on success, restore failure, freshness failure and interrupt. The counts and `REHEARSAL OK`
+  line still print before the trap runs.
+- **The first rehearsal after the fix failed for a real reason:** `pg_restore 16.15` rejected the dump with
+  `unrecognized configuration parameter "transaction_timeout"`. The dump header says it was written by `pg_dump
+  18.7` — the PATH client is newer than the 16.15 server. `backup-db.sh` and `restore-db.sh` now derive the server's
+  major from `show server_version` and select `/usr/lib/postgresql/<major>/bin/pg_{dump,restore}`, with PATH fallback.
+  Today's dump was regenerated with the 16 binary.
+- Verified after installing both patched scripts: `REHEARSAL OK: streakforge-2026-11-17.dump (0h old) ->
+  streakforge_restore_check | profiles 81 | migrations 22`, exit 0, and `pg_database` has no `*_restore_check` row.
+  A missing-dump probe exited 1 and also left no scratch row. The live database was never the target.
+
+
 ## 2026-11-17 — the lost features were a route allowlist, not lost code
 
 Owner: *"the deployed streakforge regressed, we had more features before but they were lost."* Plan:
