@@ -1,5 +1,30 @@
 # StreakForge — Development Status
 
+## 2026-11-17 — the lost features were a route allowlist, not lost code
+
+Owner: *"the deployed streakforge regressed, we had more features before but they were lost."* Plan:
+`docs/plans/2026-11-16-redeploy-lost-features.md`.
+
+- **Diagnosis changed by measurement.** The deployed backend's SHA-256 is the same as the binary built from HEAD
+  (`81e881a2…`), its strings contain the admin handler, and `_sqlx_migrations` has every version through 0022. Direct
+  `127.0.0.1:8001` answered 200 for `/admin`, `/metrics`, `/affirmations`, `/privacy` and `/glossary`. The 404s were
+  nginx's: the 2026-11-14 soft-404 guard allowlisted only ten client routes and never added the newer pages.
+- **Fix.** The named-location allowlist now contains every page in `web/src/routes`: admin, affirmations, app, cage,
+  dashboard, denial, doctrine, drill, feed, glossary, kpi, leaderboard, log, login, metrics, moderation, privacy,
+  settings, terms, plus `profile/<username>`. The live vhost and the estate mirror both carry it; `nginx -t` passed,
+  nginx reloaded, and a typo still 404s.
+- **Frontend republished.** The deployed bundle was older than the source (none of `HOW THESE ARE COUNTED`,
+  `Nobody shares yet`, `withdraw mine` were in it). A fresh `node node_modules/vite/bin/vite.js build` was rsynced to
+  `/var/www/streakforge`; the deployed version moved from `1794669646781` to `1794918107858`, and all three strings
+  are now in hashed node bundles. A root-owned `fonts/` directory blocked the first `--delete` rsync; it was chowned
+  to `alvaro` before the retry.
+- **Decision:** did not run `scripts/deploy.sh`, because step 4 rewrites `SECURE_COOKIES=1` and would sign every member
+  out as a side effect of this recovery. The backend was already current, so no binary or `.env` was touched.
+
+Verified: local 8035 and public probes all 200 for the recovered pages; `/totally-not-a-route` still 404;
+`/api/total` unchanged at `{"denied":120,"total":235}`; browser after clearing the service worker and cache shows the
+new nav items CAGE / DECK / NUMBERS and the real /admin, /metrics and /affirmations pages instead of nginx 404.
+
 ## 2026-10-29 (sixth pass) — the product numbers, and the roadmap closed
 
 Owner: *"#123 a TL4 /admin page with product numbers … implement these and dismiss everything else in
